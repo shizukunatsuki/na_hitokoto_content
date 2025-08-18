@@ -9,7 +9,7 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
 
 export default {
     /**
-     * 处理 HTTP 请求的处理器，现在包含路由逻辑。
+     * 处理 HTTP 请求的处理器，包含路由逻辑。
      * @param {Request} request - 传入的请求对象
      * @param {object} env - 环境变量和绑定
      * @param {object} ctx - 执行上下文
@@ -52,11 +52,13 @@ export default {
         try {
             const cached_text = await env.TEXT_CACHE.get(KV_KEY);
             if (cached_text) {
-                return new Response(cached_text, {
+                // 修正：在返回的文本末尾添加换行符，以获得更好的终端体验
+                return new Response(cached_text + '\n', {
                     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
                 });
             } else {
-                return new Response("内容正在生成中，请稍后刷新重试。", {
+                // 修正：在提示信息末尾添加换行符
+                return new Response("内容正在生成中，请稍后刷新重试。\n", {
                     status: 503,
                     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
                 });
@@ -94,13 +96,16 @@ export default {
         try {
             console.log("Manual update triggered via /update endpoint.");
             await this.update_kv_text(env);
-            return new Response(JSON.stringify({ success: true, message: 'Text content updated successfully.' }), {
+            const success_response = { success: true, message: 'Text content updated successfully.' };
+            // 修正：在返回的 JSON 字符串末尾添加换行符
+            return new Response(JSON.stringify(success_response) + '\n', {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' },
             });
         } catch (error) {
             console.error("Error during manual update:", error);
-            return new Response(JSON.stringify({ success: false, message: `Failed to update: ${error.message}` }), {
+            const error_response = { success: false, message: `Failed to update: ${error.message}` };
+            return new Response(JSON.stringify(error_response) + '\n', {
                 status: 500,
                 headers: { 'Content-Type': 'application/json' },
             });
@@ -167,5 +172,6 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
         throw new Error("LLM API 未返回有效的文本内容。");
     }
     console.log("Successfully generated text from LLM.");
+    // .trim() 仍然是好的实践，以防 LLM 返回不必要的空白
     return generated_text.trim();
 }
