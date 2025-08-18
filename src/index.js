@@ -2,12 +2,16 @@
 import system_prompt_text from './system_prompt.txt';
 import user_prompt_text from './user_prompt.txt';
 
-// 定义常量
+// --- 配置常量 ---
 const KV_KEY = "generated_text";
 const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud";
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
 
-// 定义通用的 CORS 头部，以便复用
+// 重试策略配置
+const RETRY_ATTEMPTS = 3; // 自动更新失败时的最大重试次数
+const RETRY_DELAY_MS = 2000; // 每次重试之间的延迟（毫秒）
+
+// CORS 头部配置
 const CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -16,28 +20,21 @@ const CORS_HEADERS = {
 
 export default {
     /**
-     * 处理 HTTP 请求的处理器，完整支持 CORS。
-     * @param {Request} request - 传入的请求对象
-     * @param {object} env - 环境变量和绑定
-     * @param {object} ctx - 执行上下文
-     * @returns {Response} - 返回给客户端的响应
+     * 主 HTTP 请求处理器
      */
     async fetch(request, env, ctx) {
-        // 处理浏览器的 CORS 预检请求 (preflight request)
         if (request.method === 'OPTIONS') {
             return this.handle_options(request);
         }
 
         const url = new URL(request.url);
 
-        // 路由逻辑
         switch (url.pathname) {
             case '/':
                 return this.handle_get_text(request, env);
             case '/update':
                 return this.handle_force_update(request, env);
             default:
-                // 为 404 响应也添加 CORS 头部和换行符
                 return new Response('Not Found\n', { 
                     status: 404,
                     headers: CORS_HEADERS 
@@ -46,68 +43,71 @@ export default {
     },
 
     /**
-     * 由 Cron 触发的计划任务处理器
-     * @param {ScheduledEvent} event - 计划事件对象
-     * @param {object} env - 环境变量和绑定
-     * @param {object} ctx - 执行上下文
+     * Cron 触发的计划任务处理器
      */
     async scheduled(event, env, ctx) {
-        console.log(`[${new Date().toISOString()}] Cron job triggered. Starting text generation.`);
-        ctx.waitUntil(this.update_kv_text(env));
+        console.log(`[${new Date().toISOString()}] Cron job triggered. Starting update process with retries.`);
+        ctx.waitUntil(this.run_update_with_retries(env));
     },
 
     /**
-     * 处理 OPTIONS 预检请求的处理器
-     * @param {Request} request
+     * 带重试逻辑的更新执行器，供 scheduled 任务调用
+     * @param {object} env
+     */
+    async run_update_with_retries(env) {
+        for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
+            try {
+                await this.update_kv_text(env);
+                console.log(`Update successful on attempt ${attempt}/${RETRY_ATTEMPTS}.`);
+                return; // 成功后立即退出
+            } catch (error) {
+                console.error(`Attempt ${attempt}/${RETRY_ATTEMPTS} failed: ${error.message}`);
+                if (attempt < RETRY_ATTEMPTS) {
+                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                } else {
+                    console.error("All retry attempts failed. The content was not updated by the cron job.");
+                }
+            }
+        }
+    },
+
+    /**
+     * 处理 OPTIONS 预检请求
      */
     handle_options(request) {
-        // 直接返回带有 CORS 许可的空响应
         return new Response(null, {
-            status: 204, // No Content
+            status: 204,
             headers: CORS_HEADERS,
         });
     },
     
     /**
      * 处理根路径 '/' 的请求
-     * @param {Request} request
-     * @param {object} env
      */
     async handle_get_text(request, env) {
         try {
             const cached_text = await env.TEXT_CACHE.get(KV_KEY);
             if (cached_text) {
                 return new Response(cached_text + '\n', {
-                    headers: {
-                        'Content-Type': 'text/plain; charset=utf-8',
-                        ...CORS_HEADERS,
-                    },
+                    headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS },
                 });
             } else {
                 return new Response("内容正在生成中，请稍后刷新重试。\n", {
                     status: 503,
-                    headers: {
-                        'Content-Type': 'text/plain; charset=utf-8',
-                        ...CORS_HEADERS,
-                    },
+                    headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS },
                 });
             }
         } catch (error) {
             console.error("Error in handle_get_text:", error);
             return new Response(`服务器内部错误: ${error.message}\n`, { 
                 status: 500,
-                headers: {
-                    'Content-Type': 'text/plain; charset=utf-8',
-                    ...CORS_HEADERS,
-                }
+                headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS }
             });
         }
     },
 
     /**
-     * 处理 '/update' 路径的强制更新请求
-     * @param {Request} request
-     * @param {object} env
+     * 处理 '/update' 路径的强制更新请求 (无重试，立即反馈)
      */
     async handle_force_update(request, env) {
         if (request.method !== 'POST') {
@@ -133,27 +133,20 @@ export default {
             const success_response = { success: true, message: 'Text content updated successfully.' };
             return new Response(JSON.stringify(success_response) + '\n', {
                 status: 200,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...CORS_HEADERS,
-                },
+                headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
             });
         } catch (error) {
             console.error("Error during manual update:", error);
             const error_response = { success: false, message: `Failed to update: ${error.message}` };
             return new Response(JSON.stringify(error_response) + '\n', {
                 status: 500,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...CORS_HEADERS,
-                },
+                headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
             });
         }
     },
 
     /**
-     * 更新 KV 中存储文本的核心函数 (被 scheduled 和 handle_force_update 共用)
-     * @param {object} env - 环境变量和绑定
+     * 更新 KV 中存储文本的核心函数
      */
     async update_kv_text(env) {
         try {
@@ -175,7 +168,6 @@ export default {
 
 /**
  * 从外部 URL 获取 prompt
- * @returns {Promise<string>} - 返回获取到的 prompt 文本
  */
 async function get_external_prompt() {
     console.log(`Fetching external prompt from: ${EXTERNAL_PROMPT_URL}`);
@@ -189,12 +181,7 @@ async function get_external_prompt() {
 }
 
 /**
- * 调用 Google Gemini API 生成文本
- * @param {string} system_prompt - 系统指令
- * @param {string} fixed_user_prompt - 固定的用户指令
- * @param {string} dynamic_user_prompt - 动态获取的用户指令
- * @param {string} api_key - Gemini API Key
- * @returns {Promise<string>} - 返回 LLM 生成的文本
+ * 调用 Google Gemini API 生成文本 (已更新为包含所有安全设置)
  */
 async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key) {
     if (!api_key) {
@@ -203,23 +190,60 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
     const final_user_prompt = `${fixed_user_prompt}\n\n"${dynamic_user_prompt}"`;
     const request_body = {
         "systemInstruction": { "parts": [{ "text": system_prompt }] },
-        "contents": [{ "role": "user", "parts": [{ "text": final_user_prompt }] }]
+        "contents": [{ "role": "user", "parts": [{ "text": final_user_prompt }] }],
+        // 修正：禁用所有官方文档支持的安全审查功能
+        "safetySettings": [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_CIVIC_INTEGRITY", // 新增：涵盖公民诚信类别
+                "threshold": "BLOCK_NONE"
+            }
+        ]
     };
+    
+    console.log("Calling Gemini API with all safety settings disabled...");
     const response = await fetch(GEMINI_API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-goog-api-key': api_key },
+        headers: { 
+            'Content-Type': 'application/json', 
+            'X-goog-api-key': api_key 
+        },
         body: JSON.stringify(request_body),
     });
+
     if (!response.ok) {
         const error_text = await response.text();
         throw new Error(`LLM API 请求失败，状态码: ${response.status}, 响应: ${error_text}`);
     }
+
     const data = await response.json();
     const generated_text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
     if (!generated_text) {
+        const finish_reason = data?.candidates?.[0]?.finishReason;
+        if (finish_reason === 'SAFETY') {
+             console.error("LLM API response blocked due to safety reasons, despite settings. Response:", JSON.stringify(data));
+             throw new Error("LLM API 响应因安全原因被阻止。");
+        }
         console.error("LLM API 响应格式不正确或未返回内容:", JSON.stringify(data));
         throw new Error("LLM API 未返回有效的文本内容。");
     }
+
     console.log("Successfully generated text from LLM.");
     return generated_text.trim();
 }
