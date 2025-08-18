@@ -15,9 +15,10 @@ binding = "TEXT_CACHE"
 id = "da58941aa79b41c890f4d2f155dc658a" # <--- 请替换成您的 KV Namespace ID
 
 # 定义构建规则，以确保 .txt 文件能被正确加载
-[rules]
+[[rules]]
 type = "Text"
 globs = ["**/*.txt"]
+
 
 # 添加 Cron 触发器
 # "0 * * * *" 表示在每小时的第 0 分钟执行
