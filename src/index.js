@@ -181,7 +181,7 @@ async function get_external_prompt() {
 }
 
 /**
- * 调用 Google Gemini API 生成文本 (已更新为包含所有安全设置)
+ * 调用 Google Gemini API 生成文本 (已更新为最精确的安全和性能设置)
  */
 async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key) {
     if (!api_key) {
@@ -191,32 +191,19 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
     const request_body = {
         "systemInstruction": { "parts": [{ "text": system_prompt }] },
         "contents": [{ "role": "user", "parts": [{ "text": final_user_prompt }] }],
-        // 修正：禁用所有官方文档支持的安全审查功能
+        // 修正：精确禁用所有 Gemini 模型支持的、非弃用的安全审查功能
         "safetySettings": [
-            {
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_HATE_SPEECH",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_CIVIC_INTEGRITY", // 新增：涵盖公民诚信类别
-                "threshold": "BLOCK_NONE"
-            }
-        ]
+            { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
+            { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
+            { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
+            { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
+        ],
+        "thinkingConfig": {
+            "thinkingBudget": 32768
+        }
     };
     
-    console.log("Calling Gemini API with all safety settings disabled...");
+    console.log("Calling Gemini API with precise performance and safety settings...");
     const response = await fetch(GEMINI_API_URL, {
         method: 'POST',
         headers: { 
