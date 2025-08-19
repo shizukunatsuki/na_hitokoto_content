@@ -181,7 +181,7 @@ async function get_external_prompt() {
 }
 
 /**
- * 调用 Google Gemini API 生成文本 (已修正 payload 结构)
+ * 调用 Google Gemini API 生成文本 (已包含最终的 temperature 设置)
  */
 async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key) {
     if (!api_key) {
@@ -197,15 +197,15 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
             { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
             { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
         ],
-        // 修正：将 thinkingConfig 嵌套在 generationConfig 内部
         "generationConfig": {
+            "temperature": 2.0, // 新增：将 temperature 设置为最大值以获得最高创造力
             "thinkingConfig": {
                 "thinkingBudget": 32768
             }
         }
     };
     
-    console.log("Calling Gemini API with corrected payload structure...");
+    console.log("Calling Gemini API with final performance and creativity settings...");
     const response = await fetch(GEMINI_API_URL, {
         method: 'POST',
         headers: { 
