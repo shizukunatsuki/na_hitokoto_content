@@ -193,21 +193,15 @@ async function get_external_prompt(env) {
     return text;
 }
 
-/**
- * 调用 Google Gemini API 生成文本 (已恢复为更稳健的 prompt 构建方式)
- */
 async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key) {
     if (!api_key) {
         throw new Error("GEMINI_API_KEY 未设置。请在 Cloudflare Worker 的环境变量中配置它。");
     }
     const final_user_prompt = `${fixed_user_prompt}\n\n"${dynamic_user_prompt}"`;
     
-    // 修正：恢复为将所有 prompt 放入 contents 数组的稳健格式
     const request_body = {
-        "contents": [
-            { "role": "system", "parts": [{ "text": system_prompt }] },
-            { "role": "user", "parts": [{ "text": final_user_prompt }] }
-        ],
+        "systemInstruction": { "parts": [{ "text": system_prompt }] },
+        "contents": [{ "role": "user", "parts": [{ "text": final_user_prompt }] }],
         "safetySettings": [
             { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
             { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
@@ -221,7 +215,7 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
             }
         }
     };
-    
+       
     console.log("Calling Gemini API with robust multi-turn prompt format...");
     const response = await fetch(GEMINI_API_URL, {
         method: 'POST',
