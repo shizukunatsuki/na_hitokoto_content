@@ -4,8 +4,7 @@ import user_prompt_text from './user_prompt.txt';
 
 // --- 配置常量 ---
 const KV_KEY = "generated_text";
-const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud";
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
+const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 
 // 重试策略配置
 const RETRY_ATTEMPTS = 3; // 自动更新失败时的最大重试次数
@@ -150,7 +149,8 @@ export default {
      */
     async update_kv_text(env) {
         try {
-            const external_prompt = await get_external_prompt();
+            // 修正：现在需要传入 env 以获取认证 token
+            const external_prompt = await get_external_prompt(env);
             const new_text = await generate_text_with_llm(
                 system_prompt_text,
                 user_prompt_text,
@@ -167,21 +167,37 @@ export default {
 };
 
 /**
- * 从外部 URL 获取 prompt
+ * 从外部 URL 获取 prompt (已更新以支持 POST 和 Bearer Token 认证)
+ * @param {object} env - Worker 的环境变量，用于获取 UPDATE_TOKEN
+ * @returns {Promise<string>} - 返回获取到的 prompt 文本
  */
-async function get_external_prompt() {
-    console.log(`Fetching external prompt from: ${EXTERNAL_PROMPT_URL}`);
-    const response = await fetch(EXTERNAL_PROMPT_URL);
-    if (!response.ok) {
-        throw new Error(`无法从外部 URL 获取 prompt，状态码: ${response.status}`);
+async function get_external_prompt(env) {
+    console.log(`Fetching external prompt via POST from: ${EXTERNAL_PROMPT_URL}`);
+
+    const access_token = env.UPDATE_TOKEN;
+    if (!access_token) {
+        throw new Error("UPDATE_TOKEN 环境变量未设置，无法从外部 URL 获取 prompt。");
     }
+
+    const response = await fetch(EXTERNAL_PROMPT_URL, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${access_token}`
+        }
+    });
+
+    if (!response.ok) {
+        const error_text = await response.text();
+        throw new Error(`无法从外部 URL 获取 prompt，状态码: ${response.status}, 响应: ${error_text}`);
+    }
+
     const text = await response.text();
     console.log(`Successfully fetched external prompt: "${text}"`);
     return text;
 }
 
 /**
- * 调用 Google Gemini API 生成文本 (已包含最终的 temperature 设置)
+ * 调用 Google Gemini API 生成文本
  */
 async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key) {
     if (!api_key) {
@@ -198,7 +214,7 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
             { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
         ],
         "generationConfig": {
-            "temperature": 2.0, // 新增：将 temperature 设置为最大值以获得最高创造力
+            "temperature": 2.0,
             "thinkingConfig": {
                 "thinkingBudget": 32768
             }
