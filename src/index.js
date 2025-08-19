@@ -205,7 +205,7 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
     // 修正：恢复为将所有 prompt 放入 contents 数组的稳健格式
     const request_body = {
         "contents": [
-            { "role": "user", "parts": [{ "text": system_prompt }] },
+            { "role": "system", "parts": [{ "text": system_prompt }] },
             { "role": "user", "parts": [{ "text": final_user_prompt }] }
         ],
         "safetySettings": [
