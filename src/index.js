@@ -9,7 +9,6 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
 
 // 重试策略配置
 const RETRY_ATTEMPTS = 3; // 自动更新失败时的最大重试次数
-const RETRY_DELAY_MS = 2000; // 每次重试之间的延迟（毫秒）
 
 // CORS 头部配置
 const CORS_HEADERS = {
@@ -63,7 +62,7 @@ export default {
             } catch (error) {
                 console.error(`Attempt ${attempt}/${RETRY_ATTEMPTS} failed: ${error.message}`);
                 if (attempt < RETRY_ATTEMPTS) {
-                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                    console.error("retryed");
                 } else {
                     console.error("All retry attempts failed. The content was not updated by the cron job.");
                 }
@@ -207,7 +206,6 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
     const request_body = {
         "contents": [
             { "role": "user", "parts": [{ "text": system_prompt }] },
-            { "role": "model", "parts": [{ "text": "好的，我明白了。我将扮演一位充满智慧和创造力的诗人，根据你接下来提供的核心词句，创作一段富有哲理、意境优美且不超过150字的短文。我将直接输出创作的文本。" }] },
             { "role": "user", "parts": [{ "text": final_user_prompt }] }
         ],
         "safetySettings": [
