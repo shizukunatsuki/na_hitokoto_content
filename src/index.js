@@ -8,7 +8,7 @@ const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
 
 // 重试策略配置
-const RETRY_ATTEMPTS = 3; // 自动更新失败时的最大重试次数
+const RETRY_ATTEMPTS = 4; // 自动更新失败时的最大重试次数
 
 // CORS 头部配置
 const CORS_HEADERS = {
