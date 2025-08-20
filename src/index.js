@@ -21,7 +21,7 @@ const PRIMARY_MODEL = 'gemini-2.5-pro';
 const FALLBACK_MODEL = 'gemini-2.5-flash';
 
 // 重试策略配置
-const RETRY_ATTEMPTS = 4; // 自动更新失败时的最大重试次数
+const RETRY_ATTEMPTS = 4; // 更新失败时的最大重试次数
 
 // CORS 头部配置
 const CORS_HEADERS = {
@@ -59,40 +59,40 @@ export default {
      */
     async scheduled(event, env, ctx) {
         console.log(`[${new Date().toISOString()}] Cron job triggered. Starting update process with retries and fallback.`);
-        // waitUntil 确保即使在请求结束后，更新任务也能继续执行
         ctx.waitUntil(
             this.run_update_with_retries(env).catch(err => {
-                // 捕获最终的失败，以防 run_update_with_retries 抛出异常
                 console.error("Cron job failed after all retries:", err.message);
             })
         );
     },
 
     /**
-     * 带重试和回退逻辑的统一更新执行器
+     * 带精确重试和回退逻辑的统一更新执行器
      * @param {object} env
      * @returns {Promise<{model_used: string}>} 成功时返回包含所用模型的对象
      * @throws {Error} 所有重试尝试失败后抛出错误
      */
     async run_update_with_retries(env) {
-        let current_model_name = PRIMARY_MODEL;
+        let model_for_this_attempt = PRIMARY_MODEL;
 
         for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
             try {
-                await this.update_kv_text(env, current_model_name);
-                console.log(`Update successful on attempt ${attempt}/${RETRY_ATTEMPTS} using model: ${current_model_name}.`);
-                return { model_used: current_model_name }; // 成功，返回使用的模型
+                await this.update_kv_text(env, model_for_this_attempt);
+                console.log(`Update successful on attempt ${attempt}/${RETRY_ATTEMPTS} using model: ${model_for_this_attempt}.`);
+                return { model_used: model_for_this_attempt }; // 成功，返回使用的模型
             } catch (error) {
-                console.error(`Attempt ${attempt}/${RETRY_ATTEMPTS} with model ${current_model_name} failed: ${error.message}`);
-                
-                // 检查是否是 429 错误并且当前使用的是主模型，如果是，则回退到备用模型
-                if (error.status_code === 429 && current_model_name === PRIMARY_MODEL) {
-                    console.log("Received 429 status. Falling back to gemini-2.5-flash for the next attempt.");
-                    current_model_name = FALLBACK_MODEL;
-                }
+                console.error(`Attempt ${attempt}/${RETRY_ATTEMPTS} with model ${model_for_this_attempt} failed: ${error.message}`);
 
+                // 如果还有重试机会，则根据规则决定下一次尝试的模型
                 if (attempt < RETRY_ATTEMPTS) {
-                    console.log("Retrying...");
+                    // 规则：当且仅当主模型遇到 429 错误时，才切换到备用模型
+                    if (model_for_this_attempt === PRIMARY_MODEL && error.status_code === 429) {
+                        console.log("Primary model received 429. Falling back to the fallback model for the next attempt.");
+                        model_for_this_attempt = FALLBACK_MODEL;
+                    } else {
+                        // 在所有其他情况下 (主模型非429错误，或备用模型任何错误)，都继续使用当前模型重试
+                        console.log(`Retrying with the same model: ${model_for_this_attempt}.`);
+                    }
                 }
             }
         }
@@ -196,13 +196,13 @@ export default {
                 user_prompt_text,
                 external_prompt,
                 env.GEMINI_API_KEY,
-                model_name // 传递模型名称
+                model_name
             );
             await env.TEXT_CACHE.put(KV_KEY, new_text);
             console.log(`Successfully generated and stored new text in KV using model: ${model_name}.`);
         } catch (error) {
-            console.error(`Error during text generation and storage with model ${model_name}:`, error);
-            throw error; // 将错误向上抛出，以便重试逻辑捕获
+            // 将错误向上抛出，以便重试逻辑捕获并处理
+            throw error;
         }
     }
 };
@@ -228,7 +228,7 @@ async function get_external_prompt(env) {
     if (!response.ok) {
         const error_text = await response.text();
         const error = new Error(`无法从外部 URL 获取 prompt，状态码: ${response.status}, 响应: ${error_text}`);
-        error.status_code = response.status; // 附加状态码
+        error.status_code = response.status; // 附加状态码以便上层逻辑判断
         throw error;
     }
 
@@ -270,7 +270,6 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
         "generationConfig": {
             "temperature": 2.0,
             "thinkingConfig": {
-                // 根据当前模型使用正确的 thinking_budget
                 "thinkingBudget": model_config.thinking_budget 
             }
         }
@@ -288,9 +287,8 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
 
     if (!response.ok) {
         const error_text = await response.text();
-        // 创建一个包含状态码的错误对象，以便上层逻辑可以判断
         const error = new Error(`LLM API 请求失败，状态码: ${response.status}, 响应: ${error_text}`);
-        error.status_code = response.status;
+        error.status_code = response.status; // 附加状态码以便上层逻辑判断
         throw error;
     }
 
