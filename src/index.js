@@ -5,7 +5,20 @@ import user_prompt_text from './user_prompt.txt';
 // --- 配置常量 ---
 const KV_KEY = "generated_text";
 const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
+
+// 模型配置
+const MODEL_CONFIG = {
+    'gemini-2.5-pro': {
+        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+        thinking_budget: 32768,
+    },
+    'gemini-2.5-flash': {
+        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        thinking_budget: 24576,
+    },
+};
+const PRIMARY_MODEL = 'gemini-2.5-pro';
+const FALLBACK_MODEL = 'gemini-2.5-flash';
 
 // 重试策略配置
 const RETRY_ATTEMPTS = 4; // 自动更新失败时的最大重试次数
@@ -45,29 +58,47 @@ export default {
      * Cron 触发的计划任务处理器
      */
     async scheduled(event, env, ctx) {
-        console.log(`[${new Date().toISOString()}] Cron job triggered. Starting update process with retries.`);
-        ctx.waitUntil(this.run_update_with_retries(env));
+        console.log(`[${new Date().toISOString()}] Cron job triggered. Starting update process with retries and fallback.`);
+        // waitUntil 确保即使在请求结束后，更新任务也能继续执行
+        ctx.waitUntil(
+            this.run_update_with_retries(env).catch(err => {
+                // 捕获最终的失败，以防 run_update_with_retries 抛出异常
+                console.error("Cron job failed after all retries:", err.message);
+            })
+        );
     },
 
     /**
-     * 带重试逻辑的更新执行器，供 scheduled 任务调用
+     * 带重试和回退逻辑的统一更新执行器
      * @param {object} env
+     * @returns {Promise<{model_used: string}>} 成功时返回包含所用模型的对象
+     * @throws {Error} 所有重试尝试失败后抛出错误
      */
     async run_update_with_retries(env) {
+        let current_model_name = PRIMARY_MODEL;
+
         for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
             try {
-                await this.update_kv_text(env);
-                console.log(`Update successful on attempt ${attempt}/${RETRY_ATTEMPTS}.`);
-                return; // 成功后立即退出
+                await this.update_kv_text(env, current_model_name);
+                console.log(`Update successful on attempt ${attempt}/${RETRY_ATTEMPTS} using model: ${current_model_name}.`);
+                return { model_used: current_model_name }; // 成功，返回使用的模型
             } catch (error) {
-                console.error(`Attempt ${attempt}/${RETRY_ATTEMPTS} failed: ${error.message}`);
+                console.error(`Attempt ${attempt}/${RETRY_ATTEMPTS} with model ${current_model_name} failed: ${error.message}`);
+                
+                // 检查是否是 429 错误并且当前使用的是主模型，如果是，则回退到备用模型
+                if (error.status_code === 429 && current_model_name === PRIMARY_MODEL) {
+                    console.log("Received 429 status. Falling back to gemini-2.5-flash for the next attempt.");
+                    current_model_name = FALLBACK_MODEL;
+                }
+
                 if (attempt < RETRY_ATTEMPTS) {
-                    console.error("retryed");
-                } else {
-                    console.error("All retry attempts failed. The content was not updated by the cron job.");
+                    console.log("Retrying...");
                 }
             }
         }
+        
+        // 如果循环结束仍未成功，则抛出最终错误
+        throw new Error("All retry attempts failed. The content was not updated.");
     },
 
     /**
@@ -106,7 +137,7 @@ export default {
     },
 
     /**
-     * 处理 '/update' 路径的强制更新请求 (无重试，立即反馈)
+     * 处理 '/update' 路径的强制更新请求
      */
     async handle_force_update(request, env) {
         if (request.method !== 'POST') {
@@ -127,16 +158,24 @@ export default {
         }
 
         try {
-            console.log("Manual update triggered via /update endpoint.");
-            await this.update_kv_text(env);
-            const success_response = { success: true, message: 'Text content updated successfully.' };
+            console.log("Manual update triggered via /update endpoint. Initiating update with retries/fallback.");
+            const update_result = await this.run_update_with_retries(env);
+            
+            const success_response = { 
+                success: true, 
+                message: 'Text content updated successfully.',
+                model_used: update_result.model_used // 包含本次更新使用的模型
+            };
             return new Response(JSON.stringify(success_response) + '\n', {
                 status: 200,
                 headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
             });
         } catch (error) {
-            console.error("Error during manual update:", error);
-            const error_response = { success: false, message: `Failed to update: ${error.message}` };
+            console.error("Error during manual update after all retries:", error);
+            const error_response = { 
+                success: false, 
+                message: `Failed to update after all retries: ${error.message}` 
+            };
             return new Response(JSON.stringify(error_response) + '\n', {
                 status: 500,
                 headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
@@ -146,21 +185,24 @@ export default {
 
     /**
      * 更新 KV 中存储文本的核心函数
+     * @param {object} env
+     * @param {string} model_name - 要使用的模型名称
      */
-    async update_kv_text(env) {
+    async update_kv_text(env, model_name) {
         try {
             const external_prompt = await get_external_prompt(env);
             const new_text = await generate_text_with_llm(
                 system_prompt_text,
                 user_prompt_text,
                 external_prompt,
-                env.GEMINI_API_KEY
+                env.GEMINI_API_KEY,
+                model_name // 传递模型名称
             );
             await env.TEXT_CACHE.put(KV_KEY, new_text);
-            console.log("Successfully generated and stored new text in KV.");
+            console.log(`Successfully generated and stored new text in KV using model: ${model_name}.`);
         } catch (error) {
-            console.error("Error during text generation and storage:", error);
-            throw error;
+            console.error(`Error during text generation and storage with model ${model_name}:`, error);
+            throw error; // 将错误向上抛出，以便重试逻辑捕获
         }
     }
 };
@@ -185,7 +227,9 @@ async function get_external_prompt(env) {
 
     if (!response.ok) {
         const error_text = await response.text();
-        throw new Error(`无法从外部 URL 获取 prompt，状态码: ${response.status}, 响应: ${error_text}`);
+        const error = new Error(`无法从外部 URL 获取 prompt，状态码: ${response.status}, 响应: ${error_text}`);
+        error.status_code = response.status; // 附加状态码
+        throw error;
     }
 
     const text = await response.text();
@@ -193,10 +237,25 @@ async function get_external_prompt(env) {
     return text;
 }
 
-async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key) {
+/**
+ * 使用指定的 LLM 模型生成文本
+ * @param {string} system_prompt
+ * @param {string} fixed_user_prompt
+ * @param {string} dynamic_user_prompt
+ * @param {string} api_key
+ * @param {string} model_name - 'gemini-2.5-pro' or 'gemini-2.5-flash'
+ * @returns {Promise<string>}
+ */
+async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key, model_name) {
     if (!api_key) {
         throw new Error("GEMINI_API_KEY 未设置。请在 Cloudflare Worker 的环境变量中配置它。");
     }
+    
+    const model_config = MODEL_CONFIG[model_name];
+    if (!model_config) {
+        throw new Error(`未知的模型名称: ${model_name}`);
+    }
+
     const final_user_prompt = `${fixed_user_prompt}\n\n"${dynamic_user_prompt}"`;
     
     const request_body = {
@@ -211,13 +270,14 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
         "generationConfig": {
             "temperature": 2.0,
             "thinkingConfig": {
-                "thinkingBudget": 32768
+                // 根据当前模型使用正确的 thinking_budget
+                "thinkingBudget": model_config.thinking_budget 
             }
         }
     };
        
-    console.log("Calling Gemini API with robust multi-turn prompt format...");
-    const response = await fetch(GEMINI_API_URL, {
+    console.log(`Calling Gemini API with model: ${model_name}, thinking budget: ${model_config.thinking_budget}...`);
+    const response = await fetch(model_config.api_url, {
         method: 'POST',
         headers: { 
             'Content-Type': 'application/json', 
@@ -228,7 +288,10 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
 
     if (!response.ok) {
         const error_text = await response.text();
-        throw new Error(`LLM API 请求失败，状态码: ${response.status}, 响应: ${error_text}`);
+        // 创建一个包含状态码的错误对象，以便上层逻辑可以判断
+        const error = new Error(`LLM API 请求失败，状态码: ${response.status}, 响应: ${error_text}`);
+        error.status_code = response.status;
+        throw error;
     }
 
     const data = await response.json();
