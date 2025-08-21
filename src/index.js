@@ -243,7 +243,7 @@ async function get_external_prompt(env) {
  * @param {string} fixed_user_prompt
  * @param {string} dynamic_user_prompt
  * @param {string} api_key
- * @param {string} model_name - 'gemini-2.5-pro' or 'gemini-2.5-flash'
+ * @param {string} model_name
  * @returns {Promise<string>}
  */
 async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key, model_name) {
