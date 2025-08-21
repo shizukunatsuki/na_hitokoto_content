@@ -21,7 +21,7 @@ const PRIMARY_MODEL = 'gemini-2.5-pro';
 const FALLBACK_MODEL = 'gemini-2.5-flash';
 
 // 重试策略配置
-const RETRY_ATTEMPTS = 4; // 更新失败时的最大重试次数
+const RETRY_ATTEMPTS = 10; // 更新失败时的最大重试次数
 
 // CORS 头部配置
 const CORS_HEADERS = {
