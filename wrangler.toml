@@ -31,3 +31,8 @@ crons = ["0 * * * *"]
 [vars]
 GEMINI_API_KEY = "" # 占位符，请在 Dashboard 中设置生产环境的值
 UPDATE_TOKEN = ""   # 占位符，请在 Dashboard 中设置生产环境的值
+
+#enable log
+[observability]
+enabled = true
+head_sampling_rate = 1 # optional. default = 1.
