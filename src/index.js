@@ -8,17 +8,17 @@ const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 
 // 模型配置
 const MODEL_CONFIG = {
-    'gemini-2.5-pro': {
-        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+    'gemini-pro-latest': {
+        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent",
         thinking_budget: 32768,
     },
-    'gemini-2.5-flash': {
-        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    'gemini-flash-latst': {
+        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
         thinking_budget: 24576,
     },
 };
-const PRIMARY_MODEL = 'gemini-2.5-pro';
-const FALLBACK_MODEL = 'gemini-2.5-flash';
+const PRIMARY_MODEL = 'gemini-pro-latest';
+const FALLBACK_MODEL = 'gemini-flash-latest';
 
 // 重试策略配置
 const RETRY_ATTEMPTS = 16; // 更新失败时的最大重试次数
