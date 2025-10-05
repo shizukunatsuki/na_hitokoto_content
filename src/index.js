@@ -12,7 +12,7 @@ const MODEL_CONFIG = {
         api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent",
         thinking_budget: 32768,
     },
-    'gemini-flash-latst': {
+    'gemini-flash-latest': {
         api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
         thinking_budget: 24576,
     },
