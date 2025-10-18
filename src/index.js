@@ -262,10 +262,10 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
         "systemInstruction": { "parts": [{ "text": system_prompt }] },
         "contents": [{ "role": "user", "parts": [{ "text": final_user_prompt }] }],
         "safetySettings": [
-            { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
-            { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
-            { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
-            { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
+            { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
+            { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
+            { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
+            { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" }
         ],
         "generationConfig": {
             "temperature": 2.0,
