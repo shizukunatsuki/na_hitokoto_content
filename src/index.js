@@ -69,7 +69,7 @@ export default {
     /**
      * 带精确重试和回退逻辑的统一更新执行器
      * @param {object} env
-     * @returns {Promise<{model_used: string}>} 成功时返回包含所用模型的对象
+     * @returns {Promise<{model_used: string, new_content: string}>} 成功时返回包含所用模型和新内容的对象
      * @throws {Error} 所有重试尝试失败后抛出错误
      */
     async run_update_with_retries(env) {
@@ -77,27 +77,26 @@ export default {
 
         for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
             try {
-                await this.update_kv_text(env, model_for_this_attempt);
-                console.log(`Update successful on attempt ${attempt}/${RETRY_ATTEMPTS} using model: ${model_for_this_attempt}.`);
-                return { model_used: model_for_this_attempt }; // 成功，返回使用的模型
+                const new_content = await this.update_kv_text(env, model_for_this_attempt);
+                
+                // [增强] 在成功日志中输出新内容，便于追踪
+                console.log(`Update successful on attempt ${attempt}/${RETRY_ATTEMPTS} using model: ${model_for_this_attempt}. New content: "${new_content}"`);
+                
+                return { model_used: model_for_this_attempt, new_content: new_content };
             } catch (error) {
                 console.error(`Attempt ${attempt}/${RETRY_ATTEMPTS} with model ${model_for_this_attempt} failed: ${error.message}`);
 
-                // 如果还有重试机会，则根据规则决定下一次尝试的模型
                 if (attempt < RETRY_ATTEMPTS) {
-                    // 规则：当且仅当主模型遇到 429 错误时，才切换到备用模型
                     if (model_for_this_attempt === PRIMARY_MODEL && error.status_code === 429) {
                         console.log("Primary model received 429. Falling back to the fallback model for the next attempt.");
                         model_for_this_attempt = FALLBACK_MODEL;
                     } else {
-                        // 在所有其他情况下 (主模型非429错误，或备用模型任何错误)，都继续使用当前模型重试
                         console.log(`Retrying with the same model: ${model_for_this_attempt}.`);
                     }
                 }
             }
         }
         
-        // 如果循环结束仍未成功，则抛出最终错误
         throw new Error("All retry attempts failed. The content was not updated.");
     },
 
@@ -161,12 +160,14 @@ export default {
             console.log("Manual update triggered via /update endpoint. Initiating update with retries/fallback.");
             const update_result = await this.run_update_with_retries(env);
             
+            // [增强] 在成功的 JSON 响应中添加 new_content 字段
             const success_response = { 
                 success: true, 
                 message: 'Text content updated successfully.',
-                model_used: update_result.model_used // 包含本次更新使用的模型
+                model_used: update_result.model_used,
+                new_content: update_result.new_content 
             };
-            return new Response(JSON.stringify(success_response) + '\n', {
+            return new Response(JSON.stringify(success_response, null, 2) + '\n', { // 使用 null, 2 美化 JSON 输出
                 status: 200,
                 headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
             });
@@ -176,7 +177,7 @@ export default {
                 success: false, 
                 message: `Failed to update after all retries: ${error.message}` 
             };
-            return new Response(JSON.stringify(error_response) + '\n', {
+            return new Response(JSON.stringify(error_response, null, 2) + '\n', {
                 status: 500,
                 headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
             });
@@ -187,6 +188,7 @@ export default {
      * 更新 KV 中存储文本的核心函数
      * @param {object} env
      * @param {string} model_name - 要使用的模型名称
+     * @returns {Promise<string>} 返回新生成的文本
      */
     async update_kv_text(env, model_name) {
         try {
@@ -200,8 +202,11 @@ export default {
             );
             await env.TEXT_CACHE.put(KV_KEY, new_text);
             console.log(`Successfully generated and stored new text in KV using model: ${model_name}.`);
+            
+            // [核心修改] 将新生成的文本返回给调用者
+            return new_text; 
         } catch (error) {
-            // 将错误向上抛出，以便重试逻辑捕获并处理
+            // 将错误向上抛出，由上层重试逻辑统一处理
             throw error;
         }
     }
@@ -239,12 +244,6 @@ async function get_external_prompt(env) {
 
 /**
  * 使用指定的 LLM 模型生成文本
- * @param {string} system_prompt
- * @param {string} fixed_user_prompt
- * @param {string} dynamic_user_prompt
- * @param {string} api_key
- * @param {string} model_name
- * @returns {Promise<string>}
  */
 async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key, model_name) {
     if (!api_key) {
