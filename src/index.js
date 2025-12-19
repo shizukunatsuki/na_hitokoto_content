@@ -267,7 +267,7 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
         "generationConfig": {
             "temperature": 1.0,
             "thinkingConfig": {
-                "thinkingLevel": "high"
+                //"thinkingLevel": "high"
             }
         }
     };
