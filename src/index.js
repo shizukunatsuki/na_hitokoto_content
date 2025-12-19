@@ -10,11 +10,9 @@ const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 const MODEL_CONFIG = {
     'gemini-pro-latest': {
         api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent",
-        thinking_budget: 32768,
     },
     'gemini-flash-latest': {
         api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
-        thinking_budget: 24576,
     },
 };
 const PRIMARY_MODEL = 'gemini-pro-latest';
@@ -79,7 +77,7 @@ export default {
             try {
                 const new_content = await this.update_kv_text(env, model_for_this_attempt);
                 
-                // [增强] 在成功日志中输出新内容，便于追踪
+                //在成功日志中输出新内容，便于追踪
                 console.log(`Update successful on attempt ${attempt}/${RETRY_ATTEMPTS} using model: ${model_for_this_attempt}. New content: "${new_content}"`);
                 
                 return { model_used: model_for_this_attempt, new_content: new_content };
@@ -160,7 +158,7 @@ export default {
             console.log("Manual update triggered via /update endpoint. Initiating update with retries/fallback.");
             const update_result = await this.run_update_with_retries(env);
             
-            // [增强] 在成功的 JSON 响应中添加 new_content 字段
+            //在成功的 JSON 响应中添加 new_content 字段
             const success_response = { 
                 success: true, 
                 message: 'Text content updated successfully.',
@@ -203,7 +201,7 @@ export default {
             await env.TEXT_CACHE.put(KV_KEY, new_text);
             console.log(`Successfully generated and stored new text in KV using model: ${model_name}.`);
             
-            // [核心修改] 将新生成的文本返回给调用者
+            //将新生成的文本返回给调用者
             return new_text; 
         } catch (error) {
             // 将错误向上抛出，由上层重试逻辑统一处理
@@ -267,9 +265,9 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
             { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" }
         ],
         "generationConfig": {
-            "temperature": 2.0,
+            "temperature": 1.0,
             "thinkingConfig": {
-                "thinkingBudget": model_config.thinking_budget 
+                "thinkingLevel": "high"
             }
         }
     };
