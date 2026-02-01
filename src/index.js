@@ -9,10 +9,10 @@ const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 // 模型配置
 const MODEL_CONFIG = {
     'gemini-pro-latest': {
-        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent",
+        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent",
     },
     'gemini-flash-latest': {
-        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
+        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
     },
 };
 const PRIMARY_MODEL = 'gemini-pro-latest';
@@ -267,7 +267,7 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
         "generationConfig": {
             "temperature": 1.0,
             "thinkingConfig": {
-                //"thinkingLevel": "high"
+                "thinkingLevel": "high"
             }
         }
     };
