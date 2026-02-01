@@ -265,7 +265,7 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
             { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" }
         ],
         "generationConfig": {
-            "temperature": 1.0,
+            "temperature": 2.0,
             "thinkingConfig": {
                 "thinkingLevel": "high"
             }
