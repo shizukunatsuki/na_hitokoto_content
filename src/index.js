@@ -19,7 +19,8 @@ const PRIMARY_MODEL = 'gemini-pro-latest';
 const FALLBACK_MODEL = 'gemini-flash-latest';
 
 // 重试策略配置
-const RETRY_ATTEMPTS = 16; // 更新失败时的最大重试次数
+const RETRY_ATTEMPTS = 16;
+const RETRY_DELAY = 60;
 
 // CORS 头部配置
 const CORS_HEADERS = {
@@ -72,6 +73,7 @@ export default {
      */
     async run_update_with_retries(env) {
         let model_for_this_attempt = PRIMARY_MODEL;
+        const delay_seconds = (typeof RETRY_DELAY !== 'undefined') ? RETRY_DELAY : 0;
 
         for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
             try {
@@ -85,6 +87,11 @@ export default {
                 console.error(`Attempt ${attempt}/${RETRY_ATTEMPTS} with model ${model_for_this_attempt} failed: ${error.message}`);
 
                 if (attempt < RETRY_ATTEMPTS) {
+                    if (delay_seconds > 0) {
+                    console.log(`Waiting ${delay_seconds} seconds before next retry...`);
+                    // 创建一个 Promise 来挂起执行，直到 setTimeout 完成
+                    await new Promise(resolve => setTimeout(resolve, delay_seconds * 1000));
+                    }
                     if (model_for_this_attempt === PRIMARY_MODEL && error.status_code === 429) {
                         console.log("Primary model received 429. Falling back to the fallback model for the next attempt.");
                         model_for_this_attempt = FALLBACK_MODEL;
@@ -272,7 +279,7 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
         }
     };
        
-    console.log(`Calling Gemini API with model: ${model_name}, thinking budget: ${model_config.thinking_budget}...`);
+    console.log(`Calling Gemini API with model: ${model_name}`);
     const response = await fetch(model_config.api_url, {
         method: 'POST',
         headers: { 
