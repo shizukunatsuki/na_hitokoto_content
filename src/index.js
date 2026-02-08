@@ -20,8 +20,8 @@ const REMOTE_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 
 /** 重试策略配置 (仅针对 Primary/Fallback 阶段) */
 const RETRY_CONFIG = {
-    MAX_ATTEMPTS: 4,      // 主/备循环的最大重试次数
-    DELAY_SECONDS: 4      // 重试间隔（秒）
+    MAX_ATTEMPTS: 8,      // 主/备循环的最大重试次数
+    DELAY_SECONDS: 2      // 重试间隔（秒）
 };
 
 /** 跨域资源共享 (CORS) 头配置 */
