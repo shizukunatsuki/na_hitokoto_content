@@ -219,7 +219,7 @@ async function executeResilientUpdate(env) {
             console.warn(`[Update Cycle] Attempt ${attempt} failed: ${error.message}`);
 
             // 智能降级逻辑 (Primary -> Fallback)
-            if (currentModelKey === 'PRIMARY' && (error.statusCode === 429 || error.statusCode >= 500)) {
+            if (currentModelKey === 'PRIMARY' && (error.statusCode === 429)) {
                 console.log(`[Failover] Switching strategy: PRIMARY -> FALLBACK for next attempt.`);
                 currentModelKey = 'FALLBACK';
             }
