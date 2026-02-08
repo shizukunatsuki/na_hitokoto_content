@@ -8,19 +8,19 @@ const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 
 // 模型配置
 const MODEL_CONFIG = {
-    'gemini-pro-latest': {
-        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent",
-    },
-    'gemini-flash-latest': {
+    'PRIMARY_MODEL': {
         api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
     },
+    'FALLBACK_MODEL': {
+        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    },
 };
-const PRIMARY_MODEL = 'gemini-pro-latest';
-const FALLBACK_MODEL = 'gemini-flash-latest';
+const PRIMARY_MODEL = 'PRIMARY_MODEL';
+const FALLBACK_MODEL = 'FALLBACK_MODEL';
 
 // 重试策略配置
-const RETRY_ATTEMPTS = 16;
-const RETRY_DELAY = 60;
+const RETRY_ATTEMPTS = 4;
+const RETRY_DELAY = 4;
 
 // CORS 头部配置
 const CORS_HEADERS = {
@@ -274,7 +274,7 @@ async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_
         "generationConfig": {
             "temperature": 2.0,
             "thinkingConfig": {
-                "thinkingLevel": "high"
+                //"thinkingLevel": "high"
             }
         }
     };
