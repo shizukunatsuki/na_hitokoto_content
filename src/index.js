@@ -1,314 +1,328 @@
-// 从文本文件导入 prompts
-import system_prompt_text from './system_prompt.txt';
-import user_prompt_text from './user_prompt.txt';
+/**
+ * AI Content Generator Worker
+ * 功能：定期从外部源获取 Prompt，调用 AI 模型生成内容并缓存至 Cloudflare KV。
+ * 特性：支持 OpenAI 接口标准，具备主备模型切换与自动重试机制。
+ */
 
-// --- 配置常量 ---
-const KV_KEY = "generated_text";
-const EXTERNAL_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
+// 导入静态 Prompt 文件 (需在 wrangler.toml 中配置规则或保证文件存在)
+import systemPromptText from './system_prompt.txt';
+import userPromptText from './user_prompt.txt';
 
-// 模型配置
-const MODEL_CONFIG = {
-    'PRIMARY_MODEL': {
-        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
-    },
-    'FALLBACK_MODEL': {
-        api_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-    },
+// ==========================================
+// 1. 全局配置与常量定义
+// ==========================================
+
+/** KV 存储键名 */
+const STORAGE_KEY = "generated_text";
+
+/** 外部动态 Prompt 获取地址 */
+const REMOTE_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
+
+/** 重试策略配置 */
+const RETRY_CONFIG = {
+    MAX_ATTEMPTS: 4,      // 最大重试次数
+    DELAY_SECONDS: 4      // 重试间隔（秒）
 };
-const PRIMARY_MODEL = 'PRIMARY_MODEL';
-const FALLBACK_MODEL = 'FALLBACK_MODEL';
 
-// 重试策略配置
-const RETRY_ATTEMPTS = 4;
-const RETRY_DELAY = 4;
-
-// CORS 头部配置
+/** 跨域资源共享 (CORS) 头配置 */
 const CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Authorization, Content-Type',
 };
 
-export default {
-    /**
-     * 主 HTTP 请求处理器
-     */
-    async fetch(request, env, ctx) {
-        if (request.method === 'OPTIONS') {
-            return this.handle_options(request);
-        }
-
-        const url = new URL(request.url);
-
-        switch (url.pathname) {
-            case '/':
-                return this.handle_get_text(request, env);
-            case '/update':
-                return this.handle_force_update(request, env);
-            default:
-                return new Response('Not Found\n', { 
-                    status: 404,
-                    headers: CORS_HEADERS 
-                });
+/**
+ * 模型策略配置中心
+ * 在此定义主模型（Primary）和备用模型（Fallback）。
+ * 所有模型必须支持 OpenAI Chat Completion 接口规范。
+ */
+const MODEL_REGISTRY = {
+    // 主模型
+    PRIMARY: {
+        id: "gemini-3-flash-preview",
+        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        apiKeyEnv: "GEMINI_API_KEY",
+        parameters: {
+            temperature: 2.0,
+            reasoning_effort: "high",
         }
     },
-
-    /**
-     * Cron 触发的计划任务处理器
-     */
-    async scheduled(event, env, ctx) {
-        console.log(`[${new Date().toISOString()}] Cron job triggered. Starting update process with retries and fallback.`);
-        ctx.waitUntil(
-            this.run_update_with_retries(env).catch(err => {
-                console.error("Cron job failed after all retries:", err.message);
-            })
-        );
-    },
-
-    /**
-     * 带精确重试和回退逻辑的统一更新执行器
-     * @param {object} env
-     * @returns {Promise<{model_used: string, new_content: string}>} 成功时返回包含所用模型和新内容的对象
-     * @throws {Error} 所有重试尝试失败后抛出错误
-     */
-    async run_update_with_retries(env) {
-        let model_for_this_attempt = PRIMARY_MODEL;
-        const delay_seconds = (typeof RETRY_DELAY !== 'undefined') ? RETRY_DELAY : 0;
-
-        for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
-            try {
-                const new_content = await this.update_kv_text(env, model_for_this_attempt);
-                
-                //在成功日志中输出新内容，便于追踪
-                console.log(`Update successful on attempt ${attempt}/${RETRY_ATTEMPTS} using model: ${model_for_this_attempt}. New content: "${new_content}"`);
-                
-                return { model_used: model_for_this_attempt, new_content: new_content };
-            } catch (error) {
-                console.error(`Attempt ${attempt}/${RETRY_ATTEMPTS} with model ${model_for_this_attempt} failed: ${error.message}`);
-
-                if (attempt < RETRY_ATTEMPTS) {
-                    if (delay_seconds > 0) {
-                    console.log(`Waiting ${delay_seconds} seconds before next retry...`);
-                    // 创建一个 Promise 来挂起执行，直到 setTimeout 完成
-                    await new Promise(resolve => setTimeout(resolve, delay_seconds * 1000));
-                    }
-                    if (model_for_this_attempt === PRIMARY_MODEL && error.status_code === 429) {
-                        console.log("Primary model received 429. Falling back to the fallback model for the next attempt.");
-                        model_for_this_attempt = FALLBACK_MODEL;
-                    } else {
-                        console.log(`Retrying with the same model: ${model_for_this_attempt}.`);
-                    }
-                }
-            }
-        }
-        
-        throw new Error("All retry attempts failed. The content was not updated.");
-    },
-
-    /**
-     * 处理 OPTIONS 预检请求
-     */
-    handle_options(request) {
-        return new Response(null, {
-            status: 204,
-            headers: CORS_HEADERS,
-        });
-    },
-    
-    /**
-     * 处理根路径 '/' 的请求
-     */
-    async handle_get_text(request, env) {
-        try {
-            const cached_text = await env.TEXT_CACHE.get(KV_KEY);
-            if (cached_text) {
-                return new Response(cached_text + '\n', {
-                    headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS },
-                });
-            } else {
-                return new Response("内容正在生成中，请稍后刷新重试。\n", {
-                    status: 503,
-                    headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS },
-                });
-            }
-        } catch (error) {
-            console.error("Error in handle_get_text:", error);
-            return new Response(`服务器内部错误: ${error.message}\n`, { 
-                status: 500,
-                headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS }
-            });
-        }
-    },
-
-    /**
-     * 处理 '/update' 路径的强制更新请求
-     */
-    async handle_force_update(request, env) {
-        if (request.method !== 'POST') {
-            return new Response('Method Not Allowed. Please use POST.\n', { status: 405, headers: CORS_HEADERS });
-        }
-        const correct_token = env.UPDATE_TOKEN;
-        if (!correct_token) {
-            console.error("UPDATE_TOKEN secret is not set in the environment.");
-            return new Response('Server configuration error: Update token not set.\n', { status: 500, headers: CORS_HEADERS });
-        }
-        const auth_header = request.headers.get('Authorization');
-        if (!auth_header || !auth_header.startsWith('Bearer ')) {
-            return new Response('Authorization header is missing or invalid.\n', { status: 401, headers: CORS_HEADERS });
-        }
-        const submitted_token = auth_header.split(' ')[1];
-        if (submitted_token !== correct_token) {
-            return new Response('Forbidden: Invalid token.\n', { status: 403, headers: CORS_HEADERS });
-        }
-
-        try {
-            console.log("Manual update triggered via /update endpoint. Initiating update with retries/fallback.");
-            const update_result = await this.run_update_with_retries(env);
-            
-            //在成功的 JSON 响应中添加 new_content 字段
-            const success_response = { 
-                success: true, 
-                message: 'Text content updated successfully.',
-                model_used: update_result.model_used,
-                new_content: update_result.new_content 
-            };
-            return new Response(JSON.stringify(success_response, null, 2) + '\n', { // 使用 null, 2 美化 JSON 输出
-                status: 200,
-                headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-            });
-        } catch (error) {
-            console.error("Error during manual update after all retries:", error);
-            const error_response = { 
-                success: false, 
-                message: `Failed to update after all retries: ${error.message}` 
-            };
-            return new Response(JSON.stringify(error_response, null, 2) + '\n', {
-                status: 500,
-                headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
-            });
-        }
-    },
-
-    /**
-     * 更新 KV 中存储文本的核心函数
-     * @param {object} env
-     * @param {string} model_name - 要使用的模型名称
-     * @returns {Promise<string>} 返回新生成的文本
-     */
-    async update_kv_text(env, model_name) {
-        try {
-            const external_prompt = await get_external_prompt(env);
-            const new_text = await generate_text_with_llm(
-                system_prompt_text,
-                user_prompt_text,
-                external_prompt,
-                env.GEMINI_API_KEY,
-                model_name
-            );
-            await env.TEXT_CACHE.put(KV_KEY, new_text);
-            console.log(`Successfully generated and stored new text in KV using model: ${model_name}.`);
-            
-            //将新生成的文本返回给调用者
-            return new_text; 
-        } catch (error) {
-            // 将错误向上抛出，由上层重试逻辑统一处理
-            throw error;
+    // 备用模型
+    FALLBACK: {
+        id: "gemini-2.5-flash",
+        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        apiKeyEnv: "GEMINI_API_KEY",
+        parameters: {
+            temperature: 2.0,
+            reasoning_effort: "high",
         }
     }
 };
 
-/**
- * 从外部 URL 获取 prompt
- */
-async function get_external_prompt(env) {
-    console.log(`Fetching external prompt via POST from: ${EXTERNAL_PROMPT_URL}`);
+// ==========================================
+// 2. Worker 主逻辑 (入口)
+// ==========================================
 
-    const access_token = env.UPDATE_TOKEN;
-    if (!access_token) {
-        throw new Error("UPDATE_TOKEN 环境变量未设置，无法从外部 URL 获取 prompt。");
-    }
-
-    const response = await fetch(EXTERNAL_PROMPT_URL, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${access_token}`
+export default {
+    /**
+     * HTTP 请求处理入口
+     */
+    async fetch(request, env, ctx) {
+        // 处理 CORS 预检请求
+        if (request.method === 'OPTIONS') {
+            return new Response(null, { status: 204, headers: CORS_HEADERS });
         }
-    });
 
-    if (!response.ok) {
-        const error_text = await response.text();
-        const error = new Error(`无法从外部 URL 获取 prompt，状态码: ${response.status}, 响应: ${error_text}`);
-        error.status_code = response.status; // 附加状态码以便上层逻辑判断
-        throw error;
+        const url = new URL(request.url);
+
+        try {
+            switch (url.pathname) {
+                case '/':
+                    return await handleGetContent(env);
+                case '/update':
+                    return await handleManualUpdate(request, env);
+                default:
+                    return new Response('Not Found\n', { 
+                        status: 404, 
+                        headers: CORS_HEADERS 
+                    });
+            }
+        } catch (err) {
+            console.error(`[System Error] Unhandled exception: ${err.message}`);
+            return new Response(`Internal Server Error: ${err.message}\n`, {
+                status: 500,
+                headers: CORS_HEADERS
+            });
+        }
+    },
+
+    /**
+     * Cron 定时任务入口
+     */
+    async scheduled(event, env, ctx) {
+        console.log(`[Cron] Scheduled task started at ${new Date().toISOString()}`);
+        ctx.waitUntil(
+            executeResilientUpdate(env)
+                .then(result => console.log(`[Cron] Task completed. Model: ${result.model}`))
+                .catch(err => console.error(`[Cron] Task CRITICAL FAILURE: ${err.message}`))
+        );
     }
+};
 
-    const text = await response.text();
-    console.log(`Successfully fetched external prompt: "${text}"`);
-    return text;
+// ==========================================
+// 3. 路由处理函数
+// ==========================================
+
+/**
+ * 处理根路径 GET 请求：返回缓存的文本
+ */
+async function handleGetContent(env) {
+    try {
+        const content = await env.TEXT_CACHE.get(STORAGE_KEY);
+        
+        if (!content) {
+            return new Response("Service warming up, content is generating...\n", {
+                status: 503,
+                headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS }
+            });
+        }
+
+        return new Response(content + '\n', {
+            headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS }
+        });
+    } catch (error) {
+        throw new Error(`Cache retrieval failed: ${error.message}`);
+    }
 }
 
 /**
- * 使用指定的 LLM 模型生成文本
+ * 处理 /update POST 请求：强制刷新内容
  */
-async function generate_text_with_llm(system_prompt, fixed_user_prompt, dynamic_user_prompt, api_key, model_name) {
-    if (!api_key) {
-        throw new Error("GEMINI_API_KEY 未设置。请在 Cloudflare Worker 的环境变量中配置它。");
-    }
-    
-    const model_config = MODEL_CONFIG[model_name];
-    if (!model_config) {
-        throw new Error(`未知的模型名称: ${model_name}`);
+async function handleManualUpdate(request, env) {
+    if (request.method !== 'POST') {
+        return new Response('Method Not Allowed. Use POST.\n', { status: 405, headers: CORS_HEADERS });
     }
 
-    const final_user_prompt = `${fixed_user_prompt}\n\n"${dynamic_user_prompt}"`;
-    
-    const request_body = {
-        "systemInstruction": { "parts": [{ "text": system_prompt }] },
-        "contents": [{ "role": "user", "parts": [{ "text": final_user_prompt }] }],
-        "safetySettings": [
-            { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
-            { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
-            { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
-            { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" }
-        ],
-        "generationConfig": {
-            "temperature": 2.0,
-            "thinkingConfig": {
-                //"thinkingLevel": "high"
+    // 1. 安全校验
+    const serverToken = env.UPDATE_TOKEN;
+    if (!serverToken) {
+        return new Response('Server configuration error.\n', { status: 500, headers: CORS_HEADERS });
+    }
+
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return new Response('Unauthorized: Missing or invalid Bearer token.\n', { status: 401, headers: CORS_HEADERS });
+    }
+
+    const clientToken = authHeader.split(' ')[1];
+    if (clientToken !== serverToken) {
+        return new Response('Forbidden: Invalid token.\n', { status: 403, headers: CORS_HEADERS });
+    }
+
+    // 2. 执行更新逻辑
+    try {
+        console.log("[API] Manual update triggered.");
+        const result = await executeResilientUpdate(env);
+
+        const responseData = {
+            success: true,
+            message: 'Content refreshed successfully.',
+            model_used: result.model,
+            new_content: result.content
+        };
+
+        return new Response(JSON.stringify(responseData, null, 2) + '\n', {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
+        });
+
+    } catch (error) {
+        console.error(`[API] Update failed: ${error.message}`);
+        const errorData = {
+            success: false,
+            message: `Update failed after retries: ${error.message}`
+        };
+        return new Response(JSON.stringify(errorData, null, 2) + '\n', {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
+        });
+    }
+}
+
+// ==========================================
+// 4. 核心业务逻辑 (Controller)
+// ==========================================
+
+/**
+ * 执行具备容错能力的更新流程
+ */
+async function executeResilientUpdate(env) {
+    let currentModelKey = 'PRIMARY';
+    const { MAX_ATTEMPTS, DELAY_SECONDS } = RETRY_CONFIG;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            console.log(`[Update Cycle] Attempt ${attempt}/${MAX_ATTEMPTS} using [${currentModelKey}]...`);
+
+            const generatedText = await generateAndCacheContent(env, currentModelKey);
+
+            console.log(`[Update Cycle] Success. Content length: ${generatedText.length}`);
+            return { model: currentModelKey, content: generatedText };
+
+        } catch (error) {
+            console.warn(`[Update Cycle] Attempt ${attempt} failed: ${error.message}`);
+
+            if (attempt === MAX_ATTEMPTS) {
+                throw new Error(`Failed to update content after ${MAX_ATTEMPTS} attempts. Last error: ${error.message}`);
+            }
+
+            // 智能降级策略：
+            // 如果主模型遇到 429 (限流) 或 5xx (服务端错误)，切换到备用模型
+            if (currentModelKey === 'PRIMARY' && (error.statusCode === 429 || error.statusCode >= 500)) {
+                console.log(`[Failover] Switching strategy: PRIMARY -> FALLBACK for next attempt.`);
+                currentModelKey = 'FALLBACK';
+            }
+
+            if (DELAY_SECONDS > 0) {
+                await new Promise(resolve => setTimeout(resolve, DELAY_SECONDS * 1000));
             }
         }
-    };
-       
-    console.log(`Calling Gemini API with model: ${model_name}`);
-    const response = await fetch(model_config.api_url, {
+    }
+}
+
+/**
+ * 编排内容生成流程
+ */
+async function generateAndCacheContent(env, modelKey) {
+    const dynamicPrompt = await fetchRemotePrompt(env);
+    const generatedContent = await callOpenAIStyleAPI(
+        env,
+        MODEL_REGISTRY[modelKey],
+        systemPromptText,
+        userPromptText,
+        dynamicPrompt
+    );
+    await env.TEXT_CACHE.put(STORAGE_KEY, generatedContent);
+    return generatedContent;
+}
+
+// ==========================================
+// 5. 工具函数与 API 调用 (Service Layer)
+// ==========================================
+
+/**
+ * 从远程 URL 获取动态 Prompt
+ */
+async function fetchRemotePrompt(env) {
+    const token = env.UPDATE_TOKEN;
+    if (!token) throw new Error("Missing UPDATE_TOKEN environment variable.");
+
+    const response = await fetch(REMOTE_PROMPT_URL, {
         method: 'POST',
-        headers: { 
-            'Content-Type': 'application/json', 
-            'X-goog-api-key': api_key 
-        },
-        body: JSON.stringify(request_body),
+        headers: { 'Authorization': `Bearer ${token}` }
     });
 
     if (!response.ok) {
-        const error_text = await response.text();
-        const error = new Error(`LLM API 请求失败，状态码: ${response.status}, 响应: ${error_text}`);
-        error.status_code = response.status; // 附加状态码以便上层逻辑判断
+        const err = new Error(`Remote prompt fetch failed: ${response.status} ${response.statusText}`);
+        err.statusCode = response.status;
+        throw err;
+    }
+
+    return await response.text();
+}
+
+/**
+ * 通用 LLM 调用函数 (OpenAI 兼容风格)
+ */
+async function callOpenAIStyleAPI(env, modelConfig, sysPrompt, userFixed, userDynamic) {
+    const apiKey = env[modelConfig.apiKeyEnv];
+    if (!apiKey) {
+        throw new Error(`API Key not found for environment variable: ${modelConfig.apiKeyEnv}`);
+    }
+
+    const finalUserContent = `${userFixed}\n\n"${userDynamic}"`;
+    
+    const messages = [
+        { role: "system", content: sysPrompt },
+        { role: "user", content: finalUserContent }
+    ];
+
+    const payload = {
+        model: modelConfig.id,
+        messages: messages,
+        ...modelConfig.parameters
+    };
+
+    console.log(`[LLM Service] Calling ${modelConfig.id} at ${modelConfig.endpoint}`);
+
+    const response = await fetch(modelConfig.endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        let errorBody = "";
+        try { errorBody = await response.text(); } catch (e) {}
+        const error = new Error(`API Request Failed (${response.status}): ${errorBody.substring(0, 200)}`);
+        error.statusCode = response.status;
         throw error;
     }
 
     const data = await response.json();
-    const generated_text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    // 提取关键字段
+    const content = data?.choices?.[0]?.message?.content;
+    const finishReason = data?.choices?.[0]?.finish_reason;
 
-    if (!generated_text) {
-        const finish_reason = data?.candidates?.[0]?.finishReason;
-        if (finish_reason === 'SAFETY') {
-             console.error("LLM API response blocked due to safety reasons, despite settings. Response:", JSON.stringify(data));
-             throw new Error("LLM API 响应因安全原因被阻止。");
-        }
-        console.error("LLM API 响应格式不正确或未返回内容:", JSON.stringify(data));
-        throw new Error("LLM API 未返回有效的文本内容。");
+    // 如果没有内容，直接抛出 finish_reason (例如 "content_filter" 或 "length")
+    if (!content) {
+        // 使用 fallback 文本防止 finishReason 为 undefined
+        throw new Error(finishReason || "Unknown error (no content returned)");
     }
 
-    console.log("Successfully generated text from LLM.");
-    return generated_text.trim();
+    return content.trim();
 }
