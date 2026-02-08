@@ -37,6 +37,4 @@ UPDATE_TOKEN = ""   # 占位符，请在 Dashboard 中设置生产环境的值
 enabled = true
 head_sampling_rate = 1 # optional. default = 1.
 
-#disable workers.dev & preview urls
-workers_dev = false
-preview_urls = false
+
