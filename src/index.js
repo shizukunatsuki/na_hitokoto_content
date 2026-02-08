@@ -58,7 +58,7 @@ const MODEL_REGISTRY = {
     },
     // 【第三级】最终保底模型
     FINAL: {
-        id: "gemini-2.5-flash-lite",
+        id: "gemini-2.5-flash-lite", 
         endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         apiKeyEnv: "GEMINI_API_KEY",
         parameters: {
@@ -187,19 +187,29 @@ async function handleManualUpdate(request, env) {
 
 /**
  * 执行具备多级容错能力的更新流程
- * 流程：Primary/Fallback 循环重试 -> 全部失败 -> Final 模型最后尝试 -> 抛出异常
+ * 流程：获取Prompt(仅1次) -> Primary/Fallback 循环重试 -> 全部失败 -> Final 模型最后尝试 -> 抛出异常
  */
 async function executeResilientUpdate(env) {
     let currentModelKey = 'PRIMARY';
     const { MAX_ATTEMPTS, DELAY_SECONDS } = RETRY_CONFIG;
     let lastError = null;
 
+    // 1. 预先获取动态 Prompt (避免重试时重复请求)
+    let dynamicPrompt;
+    try {
+        dynamicPrompt = await fetchRemotePrompt(env);
+    } catch (fetchErr) {
+        // 如果连 Prompt 都获取不到，直接失败，无需尝试 AI 生成
+        throw new Error(`Critical Dependency Failure: Unable to fetch prompt. ${fetchErr.message}`);
+    }
+
     // --- 阶段一：常规重试循环 (Primary & Fallback) ---
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
             console.log(`[Update Cycle] Attempt ${attempt}/${MAX_ATTEMPTS} using [${currentModelKey}]...`);
 
-            const generatedText = await generateAndCacheContent(env, currentModelKey);
+            // 将预获取的 prompt 传入
+            const generatedText = await generateAndCacheContent(env, currentModelKey, dynamicPrompt);
 
             console.log(`[Update Cycle] Success. Content length: ${generatedText.length}`);
             return { model: currentModelKey, content: generatedText };
@@ -222,19 +232,17 @@ async function executeResilientUpdate(env) {
     }
 
     // --- 阶段二：绝地反击 (Final Model) ---
-    // 代码运行到这里，说明前 4 次尝试全部失败
     console.warn(`[Critical] All ${MAX_ATTEMPTS} standard attempts failed. Engaging FINAL model protocol.`);
     
     try {
         console.log(`[Final Stand] Attempting generation using [FINAL] model...`);
-        // 注意：FINAL 模型不进行循环重试，一锤子买卖
-        const finalContent = await generateAndCacheContent(env, 'FINAL');
+        // 使用同一个 prompt 进行最后尝试
+        const finalContent = await generateAndCacheContent(env, 'FINAL', dynamicPrompt);
         
         console.log(`[Final Stand] Success! The FINAL model saved the execution.`);
         return { model: 'FINAL', content: finalContent };
         
     } catch (finalError) {
-        // 如果连 Final 模型都挂了，那就真的没办法了，抛出致命错误
         throw new Error(`CRITICAL FAILURE: All strategies exhausted. 
             Standard Retries Last Error: ${lastError?.message}
             Final Model Error: ${finalError.message}`);
@@ -244,14 +252,13 @@ async function executeResilientUpdate(env) {
 /**
  * 编排内容生成流程
  */
-async function generateAndCacheContent(env, modelKey) {
-    const dynamicPrompt = await fetchRemotePrompt(env);
-    
+async function generateAndCacheContent(env, modelKey, dynamicPrompt) {
     // 检查配置是否存在
     if (!MODEL_REGISTRY[modelKey]) {
         throw new Error(`Model configuration for '${modelKey}' not found.`);
     }
 
+    // 使用传入的 dynamicPrompt
     const generatedContent = await callOpenAIStyleAPI(
         env,
         MODEL_REGISTRY[modelKey],
@@ -275,6 +282,7 @@ async function fetchRemotePrompt(env) {
     const token = env.UPDATE_TOKEN;
     if (!token) throw new Error("Missing UPDATE_TOKEN environment variable.");
 
+    console.log(`[Prompt Service] Fetching from ${REMOTE_PROMPT_URL}`);
     const response = await fetch(REMOTE_PROMPT_URL, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
@@ -286,7 +294,9 @@ async function fetchRemotePrompt(env) {
         throw err;
     }
 
-    return await response.text();
+    const text = await response.text();
+    console.log(`[Prompt Service] Fetched ${text.length} chars.`);
+    return text;
 }
 
 /**
