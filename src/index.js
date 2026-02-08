@@ -1,10 +1,10 @@
 /**
  * AI Content Generator Worker
  * 功能：定期从外部源获取 Prompt，调用 AI 模型生成内容并缓存至 Cloudflare KV。
- * 特性：支持 OpenAI 接口标准，具备主备模型切换与自动重试机制。
+ * 特性：支持 OpenAI 接口标准，具备 "主模型 -> 备用模型 -> 最终保底" 的三级容灾机制。
  */
 
-// 导入静态 Prompt 文件 (需在 wrangler.toml 中配置规则或保证文件存在)
+// 导入静态 Prompt 文件
 import systemPromptText from './system_prompt.txt';
 import userPromptText from './user_prompt.txt';
 
@@ -18,9 +18,9 @@ const STORAGE_KEY = "generated_text";
 /** 外部动态 Prompt 获取地址 */
 const REMOTE_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 
-/** 重试策略配置 */
+/** 重试策略配置 (仅针对 Primary/Fallback 阶段) */
 const RETRY_CONFIG = {
-    MAX_ATTEMPTS: 4,      // 最大重试次数
+    MAX_ATTEMPTS: 4,      // 主/备循环的最大重试次数
     DELAY_SECONDS: 4      // 重试间隔（秒）
 };
 
@@ -33,11 +33,10 @@ const CORS_HEADERS = {
 
 /**
  * 模型策略配置中心
- * 在此定义主模型（Primary）和备用模型（Fallback）。
- * 所有模型必须支持 OpenAI Chat Completion 接口规范。
+ * 包含三级模型：PRIMARY (主力), FALLBACK (备用), FINAL (绝地反击)
  */
 const MODEL_REGISTRY = {
-    // 主模型
+    // 【第一级】主模型
     PRIMARY: {
         id: "gemini-3-flash-preview",
         endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
@@ -47,9 +46,19 @@ const MODEL_REGISTRY = {
             reasoning_effort: "high",
         }
     },
-    // 备用模型
+    // 【第二级】备用模型
     FALLBACK: {
         id: "gemini-2.5-flash",
+        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        apiKeyEnv: "GEMINI_API_KEY",
+        parameters: {
+            temperature: 2.0,
+            reasoning_effort: "high",
+        }
+    },
+    // 【第三级】最终保底模型
+    FINAL: {
+        id: "gemini-2.5-flash-lite",
         endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         apiKeyEnv: "GEMINI_API_KEY",
         parameters: {
@@ -68,7 +77,6 @@ export default {
      * HTTP 请求处理入口
      */
     async fetch(request, env, ctx) {
-        // 处理 CORS 预检请求
         if (request.method === 'OPTIONS') {
             return new Response(null, { status: 204, headers: CORS_HEADERS });
         }
@@ -113,20 +121,15 @@ export default {
 // 3. 路由处理函数
 // ==========================================
 
-/**
- * 处理根路径 GET 请求：返回缓存的文本
- */
 async function handleGetContent(env) {
     try {
         const content = await env.TEXT_CACHE.get(STORAGE_KEY);
-        
         if (!content) {
             return new Response("Service warming up, content is generating...\n", {
                 status: 503,
                 headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS }
             });
         }
-
         return new Response(content + '\n', {
             headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS }
         });
@@ -135,54 +138,43 @@ async function handleGetContent(env) {
     }
 }
 
-/**
- * 处理 /update POST 请求：强制刷新内容
- */
 async function handleManualUpdate(request, env) {
     if (request.method !== 'POST') {
         return new Response('Method Not Allowed. Use POST.\n', { status: 405, headers: CORS_HEADERS });
     }
 
-    // 1. 安全校验
     const serverToken = env.UPDATE_TOKEN;
-    if (!serverToken) {
-        return new Response('Server configuration error.\n', { status: 500, headers: CORS_HEADERS });
-    }
+    if (!serverToken) return new Response('Server configuration error.\n', { status: 500, headers: CORS_HEADERS });
 
     const authHeader = request.headers.get('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return new Response('Unauthorized: Missing or invalid Bearer token.\n', { status: 401, headers: CORS_HEADERS });
     }
 
-    const clientToken = authHeader.split(' ')[1];
-    if (clientToken !== serverToken) {
+    if (authHeader.split(' ')[1] !== serverToken) {
         return new Response('Forbidden: Invalid token.\n', { status: 403, headers: CORS_HEADERS });
     }
 
-    // 2. 执行更新逻辑
     try {
         console.log("[API] Manual update triggered.");
         const result = await executeResilientUpdate(env);
 
-        const responseData = {
+        return new Response(JSON.stringify({
             success: true,
             message: 'Content refreshed successfully.',
             model_used: result.model,
             new_content: result.content
-        };
-
-        return new Response(JSON.stringify(responseData, null, 2) + '\n', {
+        }, null, 2) + '\n', {
             status: 200,
             headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
         });
 
     } catch (error) {
         console.error(`[API] Update failed: ${error.message}`);
-        const errorData = {
+        return new Response(JSON.stringify({
             success: false,
-            message: `Update failed after retries: ${error.message}`
-        };
-        return new Response(JSON.stringify(errorData, null, 2) + '\n', {
+            message: `Update failed after final attempt: ${error.message}`
+        }, null, 2) + '\n', {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
         });
@@ -194,12 +186,15 @@ async function handleManualUpdate(request, env) {
 // ==========================================
 
 /**
- * 执行具备容错能力的更新流程
+ * 执行具备多级容错能力的更新流程
+ * 流程：Primary/Fallback 循环重试 -> 全部失败 -> Final 模型最后尝试 -> 抛出异常
  */
 async function executeResilientUpdate(env) {
     let currentModelKey = 'PRIMARY';
     const { MAX_ATTEMPTS, DELAY_SECONDS } = RETRY_CONFIG;
+    let lastError = null;
 
+    // --- 阶段一：常规重试循环 (Primary & Fallback) ---
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
             console.log(`[Update Cycle] Attempt ${attempt}/${MAX_ATTEMPTS} using [${currentModelKey}]...`);
@@ -210,23 +205,39 @@ async function executeResilientUpdate(env) {
             return { model: currentModelKey, content: generatedText };
 
         } catch (error) {
+            lastError = error;
             console.warn(`[Update Cycle] Attempt ${attempt} failed: ${error.message}`);
 
-            if (attempt === MAX_ATTEMPTS) {
-                throw new Error(`Failed to update content after ${MAX_ATTEMPTS} attempts. Last error: ${error.message}`);
-            }
-
-            // 智能降级策略：
-            // 如果主模型遇到 429 (限流) 或 5xx (服务端错误)，切换到备用模型
+            // 智能降级逻辑 (Primary -> Fallback)
             if (currentModelKey === 'PRIMARY' && (error.statusCode === 429 || error.statusCode >= 500)) {
                 console.log(`[Failover] Switching strategy: PRIMARY -> FALLBACK for next attempt.`);
                 currentModelKey = 'FALLBACK';
             }
 
-            if (DELAY_SECONDS > 0) {
+            // 如果不是最后一次尝试，则等待重试
+            if (attempt < MAX_ATTEMPTS && DELAY_SECONDS > 0) {
                 await new Promise(resolve => setTimeout(resolve, DELAY_SECONDS * 1000));
             }
         }
+    }
+
+    // --- 阶段二：绝地反击 (Final Model) ---
+    // 代码运行到这里，说明前 4 次尝试全部失败
+    console.warn(`[Critical] All ${MAX_ATTEMPTS} standard attempts failed. Engaging FINAL model protocol.`);
+    
+    try {
+        console.log(`[Final Stand] Attempting generation using [FINAL] model...`);
+        // 注意：FINAL 模型不进行循环重试，一锤子买卖
+        const finalContent = await generateAndCacheContent(env, 'FINAL');
+        
+        console.log(`[Final Stand] Success! The FINAL model saved the execution.`);
+        return { model: 'FINAL', content: finalContent };
+        
+    } catch (finalError) {
+        // 如果连 Final 模型都挂了，那就真的没办法了，抛出致命错误
+        throw new Error(`CRITICAL FAILURE: All strategies exhausted. 
+            Standard Retries Last Error: ${lastError?.message}
+            Final Model Error: ${finalError.message}`);
     }
 }
 
@@ -235,6 +246,12 @@ async function executeResilientUpdate(env) {
  */
 async function generateAndCacheContent(env, modelKey) {
     const dynamicPrompt = await fetchRemotePrompt(env);
+    
+    // 检查配置是否存在
+    if (!MODEL_REGISTRY[modelKey]) {
+        throw new Error(`Model configuration for '${modelKey}' not found.`);
+    }
+
     const generatedContent = await callOpenAIStyleAPI(
         env,
         MODEL_REGISTRY[modelKey],
@@ -242,6 +259,7 @@ async function generateAndCacheContent(env, modelKey) {
         userPromptText,
         dynamicPrompt
     );
+
     await env.TEXT_CACHE.put(STORAGE_KEY, generatedContent);
     return generatedContent;
 }
@@ -263,7 +281,7 @@ async function fetchRemotePrompt(env) {
     });
 
     if (!response.ok) {
-        const err = new Error(`Remote prompt fetch failed: ${response.status} ${response.statusText}`);
+        const err = new Error(`Remote prompt fetch failed: ${response.status}`);
         err.statusCode = response.status;
         throw err;
     }
@@ -293,7 +311,7 @@ async function callOpenAIStyleAPI(env, modelConfig, sysPrompt, userFixed, userDy
         ...modelConfig.parameters
     };
 
-    console.log(`[LLM Service] Calling ${modelConfig.id} at ${modelConfig.endpoint}`);
+    console.log(`[LLM Service] Calling ${modelConfig.id}`);
 
     const response = await fetch(modelConfig.endpoint, {
         method: 'POST',
@@ -314,13 +332,10 @@ async function callOpenAIStyleAPI(env, modelConfig, sysPrompt, userFixed, userDy
 
     const data = await response.json();
     
-    // 提取关键字段
     const content = data?.choices?.[0]?.message?.content;
     const finishReason = data?.choices?.[0]?.finish_reason;
 
-    // 如果没有内容，直接抛出 finish_reason (例如 "content_filter" 或 "length")
     if (!content) {
-        // 使用 fallback 文本防止 finishReason 为 undefined
         throw new Error(finishReason || "Unknown error (no content returned)");
     }
 
