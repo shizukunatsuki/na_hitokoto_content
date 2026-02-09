@@ -48,17 +48,17 @@ const MODEL_REGISTRY = {
     },
     // 【第二级】备用模型
     FALLBACK: {
-        id: "gemini-2.5-flash",
-        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        apiKeyEnv: "GEMINI_API_KEY",
+        id: "gpt-4.1",
+        endpoint: "https://models.inference.ai.azure.com/chat/completions",
+        apiKeyEnv: "GITHUB_API_KEY",
         parameters: {
             temperature: 2.0,
-            reasoning_effort: "high",
+            //reasoning_effort: "high",
         }
     },
     // 【第三级】最终保底模型
     FINAL: {
-        id: "gemini-2.5-flash-lite", 
+        id: "gemini-2.5-flash", 
         endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         apiKeyEnv: "GEMINI_API_KEY",
         parameters: {
