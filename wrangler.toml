@@ -28,9 +28,10 @@ crons = ["0 * * * *"]
 # 变量和密钥声明
 # 生产环境中的值应在 Cloudflare Dashboard 中设置
 # 这种方式使得配置更加清晰，并且便于本地开发（配合 .dev.vars 文件）
-[vars]
-GEMINI_API_KEY = "" # 占位符，请在 Dashboard 中设置生产环境的值
-UPDATE_TOKEN = ""   # 占位符，请在 Dashboard 中设置生产环境的值
+[vars]# 占位符，请在 Dashboard 中设置生产环境的值
+UPDATE_TOKEN = ""
+GEMINI_API_KEY = ""
+GITHUB_API_KEY = ""
 
 #enable log
 [observability]
