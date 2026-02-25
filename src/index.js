@@ -48,7 +48,7 @@ const MODEL_REGISTRY = {
     },
     // 【第二级】备用模型
     FALLBACK: {
-        id: "gemini-2.5-flash",
+        id: "gemini-2.5-pro",
         endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         apiKeyEnv: "GEMINI_API_KEY",
         parameters: {
