@@ -207,14 +207,18 @@ async function handleModelTest(request, env) {
         return new Response('Bad Request: Invalid JSON payload.\n', { status: 400, headers: CORS_HEADERS });
     }
 
-    const { endpoint, apikey, model_id, temp, reasoning_effort } = body;
+    // 新增 raw 参数
+    const { endpoint, apikey, model_id, temp, reasoning_effort, raw } = body;
 
     if (!endpoint || !apikey || !model_id) {
         return new Response('Bad Request: Missing endpoint, apikey, or model_id.\n', { status: 400, headers: CORS_HEADERS });
     }
 
+    // 格式化 raw 为严格布尔值 (如果为 true 或是字符串 "true" 都视为开启透传)
+    const isRaw = raw === true || String(raw).toLowerCase() === 'true';
+
     try {
-        console.log(`[Model Test] Triggered for model: ${model_id}`);
+        console.log(`[Model Test] Triggered for model: ${model_id}, Raw mode: ${isRaw}`);
         
         // 现场拉取动态 Prompt
         const dynamicPrompt = await fetchRemotePrompt(env);
@@ -248,15 +252,35 @@ async function handleModelTest(request, env) {
             body: JSON.stringify(payload)
         });
 
-        // 提取上游响应头，并混入 CORS 配置，然后使用 response.body 原样返回流
-        const responseHeaders = new Headers(response.headers);
-        for (const [key, value] of Object.entries(CORS_HEADERS)) {
-            responseHeaders.set(key, value);
+        // ==========================================
+        // 响应处理逻辑：判断错误与是否透传
+        // ==========================================
+        
+        // 如果 API 报错了，或者主动要求 raw 透传，一律原样返回上游数据流和 Header
+        if (!response.ok || isRaw) {
+            const responseHeaders = new Headers(response.headers);
+            for (const [key, value] of Object.entries(CORS_HEADERS)) {
+                responseHeaders.set(key, value);
+            }
+
+            return new Response(response.body, {
+                status: response.status,
+                headers: responseHeaders
+            });
         }
 
-        return new Response(response.body, {
-            status: response.status,
-            headers: responseHeaders
+        // 成功状态且 raw 为 false，只提取内容并作为纯文本返回
+        const data = await response.json();
+        const content = data?.choices?.[0]?.message?.content;
+        const finishReason = data?.choices?.[0]?.finish_reason;
+
+        if (!content) {
+            throw new Error(finishReason || "Unknown error (no content returned from API data structure)");
+        }
+
+        return new Response(content.trim() + '\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS }
         });
 
     } catch (error) {
