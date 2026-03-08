@@ -18,10 +18,11 @@ const STORAGE_KEY = "generated_text";
 /** 外部动态 Prompt 获取地址 */
 const REMOTE_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 
-/** 重试策略配置 (仅针对 Primary/Fallback 阶段) */
+/** 重试策略配置 */
 const RETRY_CONFIG = {
-    MAX_ATTEMPTS: 8,      // 主/备循环的最大重试次数
-    DELAY_SECONDS: 2      // 重试间隔（秒）
+    MAX_ATTEMPTS: 8,          // 主/备循环的最大重试次数 (阶段一)
+    MAX_ATTEMPTS_FINAL: 4,    // 绝地反击(FINAL)阶段的最大重试次数 (阶段二)
+    DELAY_SECONDS: 2          // 重试间隔（秒）
 };
 
 /** 跨域资源共享 (CORS) 头配置 */
@@ -207,7 +208,7 @@ async function handleModelTest(request, env) {
         return new Response('Bad Request: Invalid JSON payload.\n', { status: 400, headers: CORS_HEADERS });
     }
 
-    // 新增 raw 参数
+    // 解析 raw 参数
     const { endpoint, apikey, model_id, temp, reasoning_effort, raw } = body;
 
     if (!endpoint || !apikey || !model_id) {
@@ -301,11 +302,11 @@ async function handleModelTest(request, env) {
 
 /**
  * 执行具备多级容错能力的更新流程
- * 流程：获取Prompt(仅1次) -> Primary/Fallback 循环重试 -> 全部失败 -> Final 模型最后尝试 -> 抛出异常
+ * 流程：获取Prompt(仅1次) -> Primary/Fallback 循环重试 -> 全部失败 -> Final 模型最后重试尝试 -> 抛出异常
  */
 async function executeResilientUpdate(env) {
     let currentModelKey = 'PRIMARY';
-    const { MAX_ATTEMPTS, DELAY_SECONDS } = RETRY_CONFIG;
+    const { MAX_ATTEMPTS, MAX_ATTEMPTS_FINAL, DELAY_SECONDS } = RETRY_CONFIG;
     let lastError = null;
 
     // 1. 预先获取动态 Prompt (避免重试时重复请求)
@@ -345,22 +346,34 @@ async function executeResilientUpdate(env) {
         }
     }
 
-    // --- 阶段二：绝地反击 (Final Model) ---
+    // --- 阶段二：绝地反击 (Final Model 循环) ---
     console.warn(`[Critical] All ${MAX_ATTEMPTS} standard attempts failed. Engaging FINAL model protocol.`);
     
-    try {
-        console.log(`[Final Stand] Attempting generation using [FINAL] model...`);
-        // 使用同一个 prompt 进行最后尝试
-        const finalContent = await generateAndCacheContent(env, 'FINAL', dynamicPrompt);
-        
-        console.log(`[Final Stand] Success! The FINAL model saved the execution.`);
-        return { model: 'FINAL', content: finalContent };
-        
-    } catch (finalError) {
-        throw new Error(`CRITICAL FAILURE: All strategies exhausted. 
-            Standard Retries Last Error: ${lastError?.message}
-            Final Model Error: ${finalError.message}`);
+    let finalLastError = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS_FINAL; attempt++) {
+        try {
+            console.log(`[Final Stand] Attempt ${attempt}/${MAX_ATTEMPTS_FINAL} using [FINAL] model...`);
+            // 使用同一个 prompt 进行最后尝试
+            const finalContent = await generateAndCacheContent(env, 'FINAL', dynamicPrompt);
+            
+            console.log(`[Final Stand] Success! The FINAL model saved the execution.`);
+            return { model: 'FINAL', content: finalContent };
+            
+        } catch (finalError) {
+            finalLastError = finalError;
+            console.warn(`[Final Stand] Attempt ${attempt} failed: ${finalError.message}`);
+            
+            // 如果不是最后一次尝试，则等待重试
+            if (attempt < MAX_ATTEMPTS_FINAL && DELAY_SECONDS > 0) {
+                await new Promise(resolve => setTimeout(resolve, DELAY_SECONDS * 1000));
+            }
+        }
     }
+
+    // 如果彻底耗尽了阶段二的所有重试次数
+    throw new Error(`CRITICAL FAILURE: All strategies exhausted. 
+        Standard Retries Last Error: ${lastError?.message}
+        Final Model Error: ${finalLastError?.message}`);
 }
 
 /**
