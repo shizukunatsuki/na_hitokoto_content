@@ -89,6 +89,8 @@ export default {
                     return await handleGetContent(env);
                 case '/update':
                     return await handleManualUpdate(request, env);
+                case '/modeltest':
+                    return await handleModelTest(request, env);
                 default:
                     return new Response('Not Found\n', { 
                         status: 404, 
@@ -143,7 +145,7 @@ async function handleManualUpdate(request, env) {
         return new Response('Method Not Allowed. Use POST.\n', { status: 405, headers: CORS_HEADERS });
     }
 
-    const serverToken = env.UPDATE_TOKEN;
+    const serverToken = env.ACCESS_TOKEN;
     if (!serverToken) return new Response('Server configuration error.\n', { status: 500, headers: CORS_HEADERS });
 
     const authHeader = request.headers.get('Authorization');
@@ -174,6 +176,94 @@ async function handleManualUpdate(request, env) {
         return new Response(JSON.stringify({
             success: false,
             message: `Update failed after final attempt: ${error.message}`
+        }, null, 2) + '\n', {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
+        });
+    }
+}
+
+async function handleModelTest(request, env) {
+    if (request.method !== 'POST') {
+        return new Response('Method Not Allowed. Use POST.\n', { status: 405, headers: CORS_HEADERS });
+    }
+
+    const serverToken = env.ACCESS_TOKEN;
+    if (!serverToken) return new Response('Server configuration error.\n', { status: 500, headers: CORS_HEADERS });
+
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return new Response('Unauthorized: Missing or invalid Bearer token.\n', { status: 401, headers: CORS_HEADERS });
+    }
+
+    if (authHeader.split(' ')[1] !== serverToken) {
+        return new Response('Forbidden: Invalid token.\n', { status: 403, headers: CORS_HEADERS });
+    }
+
+    let body;
+    try {
+        body = await request.json();
+    } catch (err) {
+        return new Response('Bad Request: Invalid JSON payload.\n', { status: 400, headers: CORS_HEADERS });
+    }
+
+    const { endpoint, apikey, model_id, temp, reasoning_effort } = body;
+
+    if (!endpoint || !apikey || !model_id) {
+        return new Response('Bad Request: Missing endpoint, apikey, or model_id.\n', { status: 400, headers: CORS_HEADERS });
+    }
+
+    try {
+        console.log(`[Model Test] Triggered for model: ${model_id}`);
+        
+        // 现场拉取动态 Prompt
+        const dynamicPrompt = await fetchRemotePrompt(env);
+        const finalUserContent = `${userPromptText}\n\n"${dynamicPrompt}"`;
+        
+        const messages = [
+            { role: "system", content: systemPromptText },
+            { role: "user", content: finalUserContent }
+        ];
+
+        const payload = {
+            model: model_id,
+            messages: messages
+        };
+
+        if (temp !== undefined) {
+            payload.temperature = temp;
+        }
+
+        // 处理 reasoning_effort（如果为字符串 "null"，则不携带该参数）
+        if (reasoning_effort !== undefined && String(reasoning_effort).toLowerCase() !== "null") {
+            payload.reasoning_effort = reasoning_effort;
+        }
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apikey}`
+            },
+            body: JSON.stringify(payload)
+        });
+
+        // 提取上游响应头，并混入 CORS 配置，然后使用 response.body 原样返回流
+        const responseHeaders = new Headers(response.headers);
+        for (const [key, value] of Object.entries(CORS_HEADERS)) {
+            responseHeaders.set(key, value);
+        }
+
+        return new Response(response.body, {
+            status: response.status,
+            headers: responseHeaders
+        });
+
+    } catch (error) {
+        console.error(`[Model Test] Error: ${error.message}`);
+        return new Response(JSON.stringify({
+            success: false,
+            message: `Model test execution failed: ${error.message}`
         }, null, 2) + '\n', {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
@@ -279,8 +369,8 @@ async function generateAndCacheContent(env, modelKey, dynamicPrompt) {
  * 从远程 URL 获取动态 Prompt
  */
 async function fetchRemotePrompt(env) {
-    const token = env.UPDATE_TOKEN;
-    if (!token) throw new Error("Missing UPDATE_TOKEN environment variable.");
+    const token = env.ACCESS_TOKEN;
+    if (!token) throw new Error("Missing ACCESS_TOKEN environment variable.");
 
     console.log(`[Prompt Service] Fetching from ${REMOTE_PROMPT_URL}`);
     const response = await fetch(REMOTE_PROMPT_URL, {
