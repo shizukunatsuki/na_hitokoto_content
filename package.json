@@ -1,0 +1,14 @@
+{
+  "name": "na_hitokoto_content",
+  "version": "1.0.0",
+  "description": "A Cloudflare Worker that generates text using an LLM based on a prompt from hitokoto and caches it.",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.24.3"
+  }
+}

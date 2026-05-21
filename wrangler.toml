@@ -1,0 +1,40 @@
+name = "na-hitokoto-content" # 您可以自定义 Worker 的名称
+main = "src/index.js"
+compatibility_date = "2026-02-01"
+
+routes = [
+    { pattern = "content.hitokoto.natsuki.cloud", custom_domain = true }
+]
+
+# 绑定 KV 命名空间
+# 您需要在 Cloudflare Dashboard 中创建一个 KV 命名空间
+# 然后将它的 ID 粘贴到下面
+# wrangler kv:namespace create TEXT_CACHE
+[[kv_namespaces]]
+binding = "TEXT_CACHE"
+id = "da58941aa79b41c890f4d2f155dc658a" # <--- 请替换成您的 KV Namespace ID
+
+# 定义构建规则，以确保 .txt 文件能被正确加载
+[[rules]]
+type = "Text"
+globs = ["**/*.txt"]
+
+
+# 添加 Cron 触发器
+# "0 * * * *" 表示在每小时的第 0 分钟执行
+[triggers]
+crons = ["0 * * * *"]
+
+# 变量和密钥声明
+# 生产环境中的值应在 Cloudflare Dashboard 中设置
+[vars]
+# ACCESS_TOKEN = ""
+# GEMINI_API_KEY = ""
+# GITHUB_API_KEY = ""
+
+#enable log
+[observability]
+enabled = true
+head_sampling_rate = 1 # optional. default = 1.
+
+
