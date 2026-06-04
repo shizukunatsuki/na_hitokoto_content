@@ -98,7 +98,7 @@ const MODEL_LIST = {
             temperature: 1.0,
             reasoning_effort: "high",
         }
-    }
+    },
     OPENROUTER_FREE: {
         label: "OpenRouter Free Router",
         provider: "openrouter",
