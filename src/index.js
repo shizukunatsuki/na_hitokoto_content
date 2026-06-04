@@ -89,7 +89,16 @@ const MODEL_LIST = {
             reasoning_effort: "high",
         }
     },
-
+    
+    GITHUB_DEEPSEEK_V3: {
+        label: "GitHub Models DeepSeek V3",
+        provider: "github_models",
+        id: "DeepSeek-V3-0324",
+        parameters: {
+            temperature: 1.0,
+            reasoning_effort: "high",
+        }
+    }
     OPENROUTER_FREE: {
         label: "OpenRouter Free Router",
         provider: "openrouter",
@@ -99,11 +108,10 @@ const MODEL_LIST = {
             reasoning_effort: "high",
         }
     },
-
-    GITHUB_DEEPSEEK_V3: {
-        label: "GitHub Models DeepSeek V3",
-        provider: "github_models",
-        id: "DeepSeek-V3-0324",
+    OPENROUTER_KIMI_K2_6_FREE: {
+        label: "OpenRouter Free Router",
+        provider: "openrouter",
+        id: "moonshotai/kimi-k2.6:free",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
@@ -117,7 +125,7 @@ const MODEL_LIST = {
  */
 const MODEL_ROLE_BINDINGS = {
     PRIMARY: "CF_KIMI_K2_6",
-    FALLBACK: "OPENROUTER_FREE",
+    FALLBACK: "OPENROUTER_KIMI_K2_6_FREE",
     FINAL: "GITHUB_DEEPSEEK_V3",
 };
 
