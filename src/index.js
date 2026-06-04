@@ -39,17 +39,18 @@ const CORS_HEADERS = {
 const MODEL_REGISTRY = {
     // 【第一级】主模型
     PRIMARY: {
-        id: "gemini-flash-latest",
-        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        apiKeyEnv: "GEMINI_API_KEY",
+        id: "@cf/moonshotai/kimi-k2.6",
+        provider: "cloudflare",
+        apiKeyEnv: "CLOUDFLARE_API_KEY",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
+            max_tokens: 1024,
         }
     },
     // 【第二级】备用模型
     FALLBACK: {
-        id: "gemini-flash-lite-latest",
+        id: "gemini-flash-latest",
         endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         apiKeyEnv: "GEMINI_API_KEY",
         parameters: {
@@ -426,6 +427,22 @@ async function fetchRemotePrompt(env) {
     return text;
 }
 
+function resolveModelEndpoint(env, modelConfig) {
+    if (modelConfig.provider === "cloudflare") {
+        if (!env.CLOUDFLARE_A_ID) {
+            throw new Error("Missing CLOUDFLARE_A_ID environment variable.");
+        }
+
+        return `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_A_ID}/ai/v1/chat/completions`;
+    }
+
+    if (!modelConfig.endpoint) {
+        throw new Error(`Missing endpoint for model: ${modelConfig.id}`);
+    }
+
+    return modelConfig.endpoint;
+}
+
 /**
  * 通用 LLM 调用函数 (OpenAI 兼容风格)
  */
@@ -435,6 +452,7 @@ async function callOpenAIStyleAPI(env, modelConfig, sysPrompt, userFixed, userDy
         throw new Error(`API Key not found for environment variable: ${modelConfig.apiKeyEnv}`);
     }
 
+    const endpoint = resolveModelEndpoint(env, modelConfig);
     const finalUserContent = `${userFixed}\n\n"${userDynamic}"`;
     
     const messages = [
@@ -450,7 +468,7 @@ async function callOpenAIStyleAPI(env, modelConfig, sysPrompt, userFixed, userDy
 
     console.log(`[LLM Service] Calling ${modelConfig.id}`);
 
-    const response = await fetch(modelConfig.endpoint, {
+    const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
