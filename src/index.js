@@ -33,15 +33,48 @@ const CORS_HEADERS = {
 };
 
 /**
+ * LLM Provider 配置中心
+ * 以后切换同一平台内的模型时，只需要改 MODEL_REGISTRY 里的 id。
+ * 只有新增平台或更换平台密钥时，才需要改这里。
+ */
+const LLM_PROVIDERS = {
+    cloudflare: {
+        label: "Cloudflare Workers AI",
+        apiKeyEnv: "CLOUDFLARE_API_KEY",
+        endpoint: (env) => {
+            if (!env.CLOUDFLARE_A_ID) {
+                throw new Error("Missing CLOUDFLARE_A_ID environment variable.");
+            }
+
+            return `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_A_ID}/ai/v1/chat/completions`;
+        }
+    },
+    gemini: {
+        label: "Gemini OpenAI Compatibility",
+        apiKeyEnv: "GEMINI_API_KEY",
+        endpoint: () => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    },
+    github_models: {
+        label: "GitHub Models",
+        apiKeyEnv: "GITHUB_API_KEY",
+        endpoint: () => "https://models.inference.ai.azure.com/chat/completions"
+    }
+};
+
+/**
  * 模型策略配置中心
  * 包含三级模型：PRIMARY (主力), FALLBACK (备用), FINAL (绝地反击)
+ *
+ * 换模型时优先只改这里：
+ * - provider: 选择上方 LLM_PROVIDERS 的键名
+ * - id: 平台要求的模型 ID
+ * - parameters: 传给上游 API 的模型参数
  */
 const MODEL_REGISTRY = {
     // 【第一级】主模型
     PRIMARY: {
-        id: "@cf/moonshotai/kimi-k2.6",
         provider: "cloudflare",
-        apiKeyEnv: "CLOUDFLARE_API_KEY",
+        id: "@cf/moonshotai/kimi-k2.6",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
@@ -49,9 +82,8 @@ const MODEL_REGISTRY = {
     },
     // 【第二级】备用模型
     FALLBACK: {
+        provider: "gemini",
         id: "gemini-flash-latest",
-        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        apiKeyEnv: "GEMINI_API_KEY",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
@@ -59,9 +91,8 @@ const MODEL_REGISTRY = {
     },
     // 【第三级】最终保底模型
     FINAL: {
-        id: "DeepSeek-V3-0324", 
-        endpoint: "https://models.inference.ai.azure.com/chat/completions",
-        apiKeyEnv: "GITHUB_API_KEY",
+        provider: "github_models",
+        id: "DeepSeek-V3-0324",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
@@ -426,32 +457,38 @@ async function fetchRemotePrompt(env) {
     return text;
 }
 
+function resolveModelProvider(modelConfig) {
+    const provider = LLM_PROVIDERS[modelConfig.provider];
+
+    if (!provider) {
+        throw new Error(`Unknown provider '${modelConfig.provider}' for model: ${modelConfig.id}`);
+    }
+
+    return provider;
+}
+
 function resolveModelEndpoint(env, modelConfig) {
-    if (modelConfig.provider === "cloudflare") {
-        if (!env.CLOUDFLARE_A_ID) {
-            throw new Error("Missing CLOUDFLARE_A_ID environment variable.");
-        }
+    const provider = resolveModelProvider(modelConfig);
+    return provider.endpoint(env);
+}
 
-        return `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_A_ID}/ai/v1/chat/completions`;
+function resolveModelApiKey(env, modelConfig) {
+    const provider = resolveModelProvider(modelConfig);
+    const apiKey = env[provider.apiKeyEnv];
+
+    if (!apiKey) {
+        throw new Error(`API Key not found for environment variable: ${provider.apiKeyEnv}`);
     }
 
-    if (!modelConfig.endpoint) {
-        throw new Error(`Missing endpoint for model: ${modelConfig.id}`);
-    }
-
-    return modelConfig.endpoint;
+    return apiKey;
 }
 
 /**
  * 通用 LLM 调用函数 (OpenAI 兼容风格)
  */
 async function callOpenAIStyleAPI(env, modelConfig, sysPrompt, userFixed, userDynamic) {
-    const apiKey = env[modelConfig.apiKeyEnv];
-    if (!apiKey) {
-        throw new Error(`API Key not found for environment variable: ${modelConfig.apiKeyEnv}`);
-    }
-
     const endpoint = resolveModelEndpoint(env, modelConfig);
+    const apiKey = resolveModelApiKey(env, modelConfig);
     const finalUserContent = `${userFixed}\n\n"${userDynamic}"`;
     
     const messages = [
@@ -465,7 +502,7 @@ async function callOpenAIStyleAPI(env, modelConfig, sysPrompt, userFixed, userDy
         ...modelConfig.parameters
     };
 
-    console.log(`[LLM Service] Calling ${modelConfig.id}`);
+    console.log(`[LLM Service] Calling ${modelConfig.provider}/${modelConfig.id}`);
 
     const response = await fetch(endpoint, {
         method: 'POST',
