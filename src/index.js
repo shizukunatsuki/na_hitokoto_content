@@ -53,6 +53,11 @@ const LLM_PROVIDERS = {
         apiKeyEnv: "GEMINI_API_KEY",
         endpoint: () => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     },
+    openrouter: {
+        label: "OpenRouter",
+        apiKeyEnv: "OPENROUTER_API_KEY",
+        endpoint: () => "https://openrouter.ai/api/v1/chat/completions"
+    },
     github_models: {
         label: "GitHub Models",
         apiKeyEnv: "GITHUB_API_KEY",
@@ -85,6 +90,15 @@ const MODEL_LIST = {
         }
     },
 
+    OPENROUTER_FREE: {
+        label: "OpenRouter Free Router",
+        provider: "openrouter",
+        id: "openrouter/free",
+        parameters: {
+            temperature: 1.0,
+        }
+    },
+
     GITHUB_DEEPSEEK_V3: {
         label: "GitHub Models DeepSeek V3",
         provider: "github_models",
@@ -102,8 +116,8 @@ const MODEL_LIST = {
  */
 const MODEL_ROLE_BINDINGS = {
     PRIMARY: "CF_KIMI_K2_6",
-    FALLBACK: "GITHUB_DEEPSEEK_V3",
-    FINAL: "GEMINI_FLASH_LATEST",
+    FALLBACK: "OPENROUTER_FREE",
+    FINAL: "GITHUB_DEEPSEEK_V3",
 };
 
 // ==========================================
