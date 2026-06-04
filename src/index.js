@@ -75,26 +75,8 @@ const MODEL_LIST = {
         }
     },
 
-    CF_LLAMA_3_3_70B_FAST: {
-        label: "Cloudflare Llama 3.3 70B Fast",
-        provider: "cloudflare",
-        id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        parameters: {
-            temperature: 1.0,
-        }
-    },
-
-    CF_LLAMA_3_1_8B: {
-        label: "Cloudflare Llama 3.1 8B",
-        provider: "cloudflare",
-        id: "@cf/meta/llama-3.1-8b-instruct-fp8",
-        parameters: {
-            temperature: 1.0,
-        }
-    },
-
-    GEMINI_FLASH: {
-        label: "Gemini Flash",
+    GEMINI_FLASH_LATEST: {
+        label: "Gemini Flash Latest",
         provider: "gemini",
         id: "gemini-flash-latest",
         parameters: {
@@ -120,8 +102,8 @@ const MODEL_LIST = {
  */
 const MODEL_ROLE_BINDINGS = {
     PRIMARY: "CF_KIMI_K2_6",
-    FALLBACK: "GEMINI_FLASH",
-    FINAL: "GITHUB_DEEPSEEK_V3",
+    FALLBACK: "GITHUB_DEEPSEEK_V3",
+    FINAL: "GEMINI_FLASH_LATEST",
 };
 
 // ==========================================
