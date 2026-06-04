@@ -34,7 +34,6 @@ const CORS_HEADERS = {
 
 /**
  * LLM Provider 配置中心
- * 以后切换同一平台内的模型时，只需要改 MODEL_REGISTRY 里的 id。
  * 只有新增平台或更换平台密钥时，才需要改这里。
  */
 const LLM_PROVIDERS = {
@@ -62,17 +61,12 @@ const LLM_PROVIDERS = {
 };
 
 /**
- * 模型策略配置中心
- * 包含三级模型：PRIMARY (主力), FALLBACK (备用), FINAL (绝地反击)
- *
- * 换模型时优先只改这里：
- * - provider: 选择上方 LLM_PROVIDERS 的键名
- * - id: 平台要求的模型 ID
- * - parameters: 传给上游 API 的模型参数
+ * 模型清单
+ * 新增/删除模型时改这里；调整主备顺序时不要改这里，改下面的 MODEL_ROLE_BINDINGS。
  */
-const MODEL_REGISTRY = {
-    // 【第一级】主模型
-    PRIMARY: {
+const MODEL_LIST = {
+    CF_KIMI_K2_6: {
+        label: "Cloudflare Kimi K2.6",
         provider: "cloudflare",
         id: "@cf/moonshotai/kimi-k2.6",
         parameters: {
@@ -80,8 +74,27 @@ const MODEL_REGISTRY = {
             reasoning_effort: "high",
         }
     },
-    // 【第二级】备用模型
-    FALLBACK: {
+
+    CF_LLAMA_3_3_70B_FAST: {
+        label: "Cloudflare Llama 3.3 70B Fast",
+        provider: "cloudflare",
+        id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        parameters: {
+            temperature: 1.0,
+        }
+    },
+
+    CF_LLAMA_3_1_8B: {
+        label: "Cloudflare Llama 3.1 8B",
+        provider: "cloudflare",
+        id: "@cf/meta/llama-3.1-8b-instruct-fp8",
+        parameters: {
+            temperature: 1.0,
+        }
+    },
+
+    GEMINI_FLASH: {
+        label: "Gemini Flash",
         provider: "gemini",
         id: "gemini-flash-latest",
         parameters: {
@@ -89,8 +102,9 @@ const MODEL_REGISTRY = {
             reasoning_effort: "high",
         }
     },
-    // 【第三级】最终保底模型
-    FINAL: {
+
+    GITHUB_DEEPSEEK_V3: {
+        label: "GitHub Models DeepSeek V3",
         provider: "github_models",
         id: "DeepSeek-V3-0324",
         parameters: {
@@ -98,6 +112,16 @@ const MODEL_REGISTRY = {
             reasoning_effort: "high",
         }
     }
+};
+
+/**
+ * 模型角色绑定
+ * 调整顺序时只改这里：把 PRIMARY / FALLBACK / FINAL 绑定到 MODEL_LIST 里的键名。
+ */
+const MODEL_ROLE_BINDINGS = {
+    PRIMARY: "CF_KIMI_K2_6",
+    FALLBACK: "GEMINI_FLASH",
+    FINAL: "GITHUB_DEEPSEEK_V3",
 };
 
 // ==========================================
@@ -336,7 +360,7 @@ async function handleModelTest(request, env) {
  * 流程：获取Prompt(仅1次) -> Primary/Fallback 循环重试 -> 全部失败 -> Final 模型最后重试尝试 -> 抛出异常
  */
 async function executeResilientUpdate(env) {
-    let currentModelKey = 'PRIMARY';
+    let currentModelRole = 'PRIMARY';
     const { MAX_ATTEMPTS, MAX_ATTEMPTS_FINAL, DELAY_SECONDS } = RETRY_CONFIG;
     let lastError = null;
 
@@ -352,22 +376,22 @@ async function executeResilientUpdate(env) {
     // --- 阶段一：常规重试循环 (Primary & Fallback) ---
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
-            console.log(`[Update Cycle] Attempt ${attempt}/${MAX_ATTEMPTS} using [${currentModelKey}]...`);
+            console.log(`[Update Cycle] Attempt ${attempt}/${MAX_ATTEMPTS} using [${currentModelRole}]...`);
 
             // 将预获取的 prompt 传入
-            const generatedText = await generateAndCacheContent(env, currentModelKey, dynamicPrompt);
+            const generatedText = await generateAndCacheContent(env, currentModelRole, dynamicPrompt);
 
             console.log(`[Update Cycle] Success. Content length: ${generatedText.length}`);
-            return { model: currentModelKey, content: generatedText };
+            return { model: currentModelRole, content: generatedText };
 
         } catch (error) {
             lastError = error;
             console.warn(`[Update Cycle] Attempt ${attempt} failed: ${error.message}`);
 
             // 智能降级逻辑 (Primary -> Fallback)
-            if (currentModelKey === 'PRIMARY' && (error.statusCode === 429)) {
+            if (currentModelRole === 'PRIMARY' && (error.statusCode === 429)) {
                 console.log(`[Failover] Switching strategy: PRIMARY -> FALLBACK for next attempt.`);
-                currentModelKey = 'FALLBACK';
+                currentModelRole = 'FALLBACK';
             }
 
             // 如果不是最后一次尝试，则等待重试
@@ -410,16 +434,13 @@ async function executeResilientUpdate(env) {
 /**
  * 编排内容生成流程
  */
-async function generateAndCacheContent(env, modelKey, dynamicPrompt) {
-    // 检查配置是否存在
-    if (!MODEL_REGISTRY[modelKey]) {
-        throw new Error(`Model configuration for '${modelKey}' not found.`);
-    }
+async function generateAndCacheContent(env, modelRole, dynamicPrompt) {
+    const modelConfig = resolveModelConfig(modelRole);
 
     // 使用传入的 dynamicPrompt
     const generatedContent = await callOpenAIStyleAPI(
         env,
-        MODEL_REGISTRY[modelKey],
+        modelConfig,
         systemPromptText,
         userPromptText,
         dynamicPrompt
@@ -455,6 +476,26 @@ async function fetchRemotePrompt(env) {
     const text = await response.text();
     console.log(`[Prompt Service] Fetched ${text.length} chars.`);
     return text;
+}
+
+function resolveModelConfig(modelRole) {
+    const modelKey = MODEL_ROLE_BINDINGS[modelRole];
+
+    if (!modelKey) {
+        throw new Error(`Model role binding not found for '${modelRole}'.`);
+    }
+
+    const modelConfig = MODEL_LIST[modelKey];
+
+    if (!modelConfig) {
+        throw new Error(`Model config '${modelKey}' bound to '${modelRole}' was not found in MODEL_LIST.`);
+    }
+
+    return {
+        ...modelConfig,
+        role: modelRole,
+        key: modelKey,
+    };
 }
 
 function resolveModelProvider(modelConfig) {
@@ -502,7 +543,7 @@ async function callOpenAIStyleAPI(env, modelConfig, sysPrompt, userFixed, userDy
         ...modelConfig.parameters
     };
 
-    console.log(`[LLM Service] Calling ${modelConfig.provider}/${modelConfig.id}`);
+    console.log(`[LLM Service] Calling ${modelConfig.role}/${modelConfig.key} (${modelConfig.provider}/${modelConfig.id})`);
 
     const response = await fetch(endpoint, {
         method: 'POST',
