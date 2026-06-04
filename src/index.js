@@ -96,6 +96,7 @@ const MODEL_LIST = {
         id: "openrouter/free",
         parameters: {
             temperature: 1.0,
+            reasoning_effort: "high",
         }
     },
 
