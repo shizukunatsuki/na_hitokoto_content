@@ -45,7 +45,6 @@ const MODEL_REGISTRY = {
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
-            max_tokens: 1024,
         }
     },
     // 【第二级】备用模型
