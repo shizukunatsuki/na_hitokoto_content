@@ -109,7 +109,7 @@ const MODEL_LIST = {
         }
     },
     OPENROUTER_KIMI_K2_6_FREE: {
-        label: "OpenRouter Free Router",
+        label: "OpenRouter Kimi K2.6 Free",
         provider: "openrouter",
         id: "moonshotai/kimi-k2.6:free",
         parameters: {
