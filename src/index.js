@@ -125,8 +125,8 @@ const MODEL_LIST = {
  */
 const MODEL_ROLE_BINDINGS = {
     PRIMARY: "CF_KIMI_K2_6",
-    FALLBACK: "OPENROUTER_KIMI_K2_6_FREE",
-    FINAL: "GEMINI_FLASH_LATEST",
+    FALLBACK: "GEMINI_FLASH_LATEST",
+    FINAL: "OPENROUTER_KIMI_K2_6_FREE",
 };
 
 // ==========================================
