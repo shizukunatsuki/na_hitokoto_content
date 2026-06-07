@@ -283,11 +283,28 @@ async function handleModelTest(request, env) {
         return new Response('Bad Request: Invalid JSON payload.\n', { status: 400, headers: CORS_HEADERS });
     }
 
-    // 解析 raw 参数
-    const { endpoint, apikey, model_id, temp, reasoning_effort, raw } = body;
+    const { endpoint, apikey, model_id, raw, parameters } = body;
+    const legacyParams = Object.fromEntries(
+        Object.entries({
+            temperature: body.temp,
+            reasoning_effort: body.reasoning_effort,
+            thinking: body.thinking,
+            max_tokens: body.max_tokens,
+            top_p: body.top_p,
+            presence_penalty: body.presence_penalty,
+            frequency_penalty: body.frequency_penalty,
+            response_format: body.response_format,
+            stop: body.stop,
+            seed: body.seed,
+        }).filter(([, value]) => value !== undefined && String(value).toLowerCase() !== "null")
+    );
 
     if (!endpoint || !apikey || !model_id) {
         return new Response('Bad Request: Missing endpoint, apikey, or model_id.\n', { status: 400, headers: CORS_HEADERS });
+    }
+
+    if (parameters !== undefined && (parameters === null || typeof parameters !== 'object' || Array.isArray(parameters))) {
+        return new Response('Bad Request: parameters must be a JSON object.\n', { status: 400, headers: CORS_HEADERS });
     }
 
     // 格式化 raw 为严格布尔值 (如果为 true 或是字符串 "true" 都视为开启透传)
@@ -307,17 +324,10 @@ async function handleModelTest(request, env) {
 
         const payload = {
             model: model_id,
-            messages: messages
+            messages: messages,
+            ...legacyParams,
+            ...(parameters || {})
         };
-
-        if (temp !== undefined) {
-            payload.temperature = temp;
-        }
-
-        // 处理 reasoning_effort（如果为字符串 "null"，则不携带该参数）
-        if (reasoning_effort !== undefined && String(reasoning_effort).toLowerCase() !== "null") {
-            payload.reasoning_effort = reasoning_effort;
-        }
 
         const response = await fetch(endpoint, {
             method: 'POST',
@@ -355,7 +365,6 @@ async function handleModelTest(request, env) {
         }
 
         return new Response(content.trim() + '\n', {
-            status: 200,
             headers: { 'Content-Type': 'text/plain; charset=utf-8', ...CORS_HEADERS }
         });
 
