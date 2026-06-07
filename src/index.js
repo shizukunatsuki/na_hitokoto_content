@@ -62,6 +62,11 @@ const LLM_PROVIDERS = {
         label: "GitHub Models",
         apiKeyEnv: "GITHUB_API_KEY",
         endpoint: () => "https://models.inference.ai.azure.com/chat/completions"
+    },
+    ali_cloud: {
+        label: "Ali Cloud",
+        apiKeyEnv: "QWEN_API_KEY",
+        endpoint: () => "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     }
 };
 
@@ -84,6 +89,16 @@ const MODEL_LIST = {
         label: "Gemini Flash Latest",
         provider: "gemini",
         id: "gemini-flash-latest",
+        parameters: {
+            temperature: 1.0,
+            reasoning_effort: "high",
+        }
+    },
+
+    QWEN_3_7_PLUS: {
+        label: "qwen 3.7 plus",
+        provider: "ali_cloud",
+        id: "qwen3.7-plus",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
@@ -124,8 +139,8 @@ const MODEL_LIST = {
  * 调整顺序时只改这里：把 PRIMARY / FALLBACK / FINAL 绑定到 MODEL_LIST 里的键名。
  */
 const MODEL_ROLE_BINDINGS = {
-    PRIMARY: "CF_KIMI_K2_6",
-    FALLBACK: "OPENROUTER_KIMI_K2_6_FREE",
+    PRIMARY: "QWEN_3_7_PLUS",
+    FALLBACK: "CF_KIMI_K2_6",
     FINAL: "GEMINI_FLASH_LATEST",
 };
 
