@@ -284,20 +284,6 @@ async function handleModelTest(request, env) {
     }
 
     const { endpoint, apikey, model_id, raw, parameters } = body;
-    const legacyParams = Object.fromEntries(
-        Object.entries({
-            temperature: body.temp,
-            reasoning_effort: body.reasoning_effort,
-            thinking: body.thinking,
-            max_tokens: body.max_tokens,
-            top_p: body.top_p,
-            presence_penalty: body.presence_penalty,
-            frequency_penalty: body.frequency_penalty,
-            response_format: body.response_format,
-            stop: body.stop,
-            seed: body.seed,
-        }).filter(([, value]) => value !== undefined && String(value).toLowerCase() !== "null")
-    );
 
     if (!endpoint || !apikey || !model_id) {
         return new Response('Bad Request: Missing endpoint, apikey, or model_id.\n', { status: 400, headers: CORS_HEADERS });
@@ -325,7 +311,6 @@ async function handleModelTest(request, env) {
         const payload = {
             model: model_id,
             messages: messages,
-            ...legacyParams,
             ...(parameters || {})
         };
 
