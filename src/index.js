@@ -18,6 +18,9 @@ const STORAGE_KEY = "generated_text";
 /** 外部动态 Prompt 获取地址 */
 const REMOTE_PROMPT_URL = "https://prompt.hitokoto.natsuki.cloud/";
 
+/** 历史内容写入地址 */
+const DEFAULT_HISTORY_API_URL = "https://history.hitokoto.natsuki.cloud/add";
+
 /** 重试策略配置 */
 const RETRY_CONFIG = {
     MAX_ATTEMPTS: 8,          // 主/备循环的最大重试次数 (阶段一)
@@ -461,6 +464,13 @@ async function generateAndCacheContent(env, modelRole, dynamicPrompt) {
     );
 
     await env.TEXT_CACHE.put(STORAGE_KEY, generatedContent);
+
+    try {
+        await saveHistoryContent(env, generatedContent);
+    } catch (error) {
+        console.error(`[History Service] Save skipped or failed: ${error.message}`);
+    }
+
     return generatedContent;
 }
 
@@ -490,6 +500,75 @@ async function fetchRemotePrompt(env) {
     const text = await response.text();
     console.log(`[Prompt Service] Fetched ${text.length} chars.`);
     return text;
+}
+
+/**
+ * 将新生成的内容写入 na_hitokoto_history。
+ * 历史写入失败不应该阻断当前内容更新，因此调用方负责降级处理。
+ */
+async function saveHistoryContent(env, generatedContent) {
+    const token = env.ACCESS_TOKEN;
+    if (!token) {
+        throw new Error("Missing ACCESS_TOKEN.");
+    }
+
+    const historyApiUrl = env.HISTORY_API_URL || DEFAULT_HISTORY_API_URL;
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const generatedId = createHistoryId();
+        const response = await fetch(historyApiUrl, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                new_content_id: generatedId,
+                new_content: generatedContent,
+            }),
+        });
+
+        if (response.ok) {
+            console.log(`[History Service] Saved generated content as ${generatedId}.`);
+            return await response.json();
+        }
+
+        const message = await safeReadResponseText(response);
+        if (response.status === 409 && attempt < maxAttempts) {
+            console.warn(`[History Service] Duplicate id ${generatedId}; retrying with a new id.`);
+            continue;
+        }
+
+        const error = new Error(`History save failed: ${response.status} ${message}`);
+        error.statusCode = response.status;
+        throw error;
+    }
+
+    throw new Error("History save failed: retry attempts exhausted.");
+}
+
+function createHistoryId() {
+    while (true) {
+        const bytes = new Uint8Array(8);
+        crypto.getRandomValues(bytes);
+        const id = [...bytes]
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join("")
+            .toUpperCase();
+
+        if (id !== "FFFFFFFFFFFFFFFF") {
+            return id;
+        }
+    }
+}
+
+async function safeReadResponseText(response) {
+    try {
+        return (await response.text()).substring(0, 200);
+    } catch (error) {
+        return error.message;
+    }
 }
 
 function resolveModelConfig(modelRole) {
