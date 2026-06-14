@@ -95,10 +95,10 @@ const MODEL_LIST = {
         }
     },
 
-    QWEN_3_7_PLUS: {
-        label: "qwen 3.7 plus",
+    QWEN: {
+        label: "qwen",
         provider: "ali_cloud",
-        id: "qwen3.7-plus",
+        id: "qwen3.7-max-2026-05-17",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
@@ -139,7 +139,7 @@ const MODEL_LIST = {
  * 调整顺序时只改这里：把 PRIMARY / FALLBACK / FINAL 绑定到 MODEL_LIST 里的键名。
  */
 const MODEL_ROLE_BINDINGS = {
-    PRIMARY: "QWEN_3_7_PLUS",
+    PRIMARY: "QWEN",
     FALLBACK: "CF_KIMI_K2_6",
     FINAL: "GEMINI_FLASH_LATEST",
 };
