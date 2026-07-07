@@ -143,8 +143,8 @@ const MODEL_LIST = {
  */
 const MODEL_ROLE_BINDINGS = {
     PRIMARY: "QWEN",
-    FALLBACK: "CF_KIMI_K2_6",
-    FINAL: "GEMINI_FLASH_LATEST",
+    FALLBACK: "GEMINI_FLASH_LATEST",
+    FINAL: "CF_KIMI_K2_6",
 };
 
 // ==========================================
