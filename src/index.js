@@ -101,7 +101,7 @@ const MODEL_LIST = {
     QWEN: {
         label: "qwen",
         provider: "ali_cloud",
-        id: "qwen3.7-max-2026-06-08",
+        id: "qwen3.6-max-preview",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
