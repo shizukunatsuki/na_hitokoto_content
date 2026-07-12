@@ -105,7 +105,6 @@ const MODEL_LIST = {
             reasoning_effort: "high",
         }
     }
-    }
 };
 
 /**
