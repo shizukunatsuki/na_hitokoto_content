@@ -78,16 +78,6 @@ const LLM_PROVIDERS = {
  * 新增/删除模型时改这里；调整主备顺序时不要改这里，改下面的 MODEL_ROLE_BINDINGS。
  */
 const MODEL_LIST = {
-    CF_KIMI_K2_6: {
-        label: "Cloudflare Kimi K2.6",
-        provider: "cloudflare",
-        id: "@cf/moonshotai/kimi-k2.6",
-        parameters: {
-            temperature: 1.0,
-            reasoning_effort: "high",
-        }
-    },
-
     GEMINI_FLASH_LATEST: {
         label: "Gemini Flash Latest",
         provider: "gemini",
@@ -97,21 +87,10 @@ const MODEL_LIST = {
             reasoning_effort: "high",
         }
     },
-
-    QWEN: {
-        label: "qwen",
+    ALI_CLOUD: {
+        label: "阿里云",
         provider: "ali_cloud",
         id: "qwen3.6-max-preview",
-        parameters: {
-            temperature: 1.0,
-            reasoning_effort: "high",
-        }
-    },
-    
-    GITHUB_DEEPSEEK_V3: {
-        label: "GitHub Models DeepSeek V3",
-        provider: "github_models",
-        id: "DeepSeek-V3-0324",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
@@ -125,15 +104,7 @@ const MODEL_LIST = {
             temperature: 1.0,
             reasoning_effort: "high",
         }
-    },
-    OPENROUTER_KIMI_K2_6_FREE: {
-        label: "OpenRouter Kimi K2.6 Free",
-        provider: "openrouter",
-        id: "moonshotai/kimi-k2.6:free",
-        parameters: {
-            temperature: 1.0,
-            reasoning_effort: "high",
-        }
+    }
     }
 };
 
@@ -142,9 +113,9 @@ const MODEL_LIST = {
  * 调整顺序时只改这里：把 PRIMARY / FALLBACK / FINAL 绑定到 MODEL_LIST 里的键名。
  */
 const MODEL_ROLE_BINDINGS = {
-    PRIMARY: "QWEN",
+    PRIMARY: "ALI_CLOUD",
     FALLBACK: "GEMINI_FLASH_LATEST",
-    FINAL: "CF_KIMI_K2_6",
+    FINAL: "OPENROUTER_FREE",
 };
 
 // ==========================================
