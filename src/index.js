@@ -90,7 +90,7 @@ const MODEL_LIST = {
     ALI_CLOUD: {
         label: "阿里云",
         provider: "ali_cloud",
-        id: "qwen3.6-max-preview",
+        id: "glm-5.2",
         parameters: {
             temperature: 1.0,
             reasoning_effort: "high",
